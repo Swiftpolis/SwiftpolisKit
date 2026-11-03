@@ -269,6 +269,18 @@ struct BatchDraftTests {
         #expect(items[1].request.customFileName == "found.zip")
         #expect(items[0].request.customFileName == nil)
     }
+
+    @Test("before the Spider answers, the list shows the name in the link, without adding it as a custom name")
+    func shownNames() {
+        let link = "https://x/S05/Show.S05E01.mkv?md5=abc&expires=1"
+        var batch = BatchDraft(preferences: Preferences(), links: [BrowserLink(url: link)])
+
+        #expect(batch.items[0].shownName == "Show.S05E01.mkv")
+        #expect(batch.selectedInAddingOrder[0].request.customFileName == nil)
+
+        batch.items[0].name = "From the server.mkv"
+        #expect(batch.items[0].shownName == "From the server.mkv")
+    }
 }
 
 @Suite("Link text")
@@ -277,6 +289,22 @@ struct LinkTextTests {
     func links() {
         let text = "https://a/1\n  http://b/2  \nnot a link\n\nhttps://c/3"
         #expect(LinkText.links(in: text) == ["https://a/1", "http://b/2", "https://c/3"])
+    }
+
+    @Test("a season's links, signed and in a row, stay separate and in episode order")
+    func seasonList() {
+        let first = "https://sn1.example.com/dl4/Show/S05/Show.S05E01.1080p.mkv?md5=DuPYNc-4b9gw&u=1&expires=179"
+        let second = "https://sn1.example.com/dl4/Show/S05/Show.S05E02.1080p.mkv?md5=GOQikr_eOlVYBQ&u=1&expires=179"
+
+        for separator in ["\n", "\r\n", " ", "  ", "\t"] {
+            #expect(LinkText.links(in: first + separator + second) == [first, second])
+        }
+    }
+
+    @Test("a space inside a link doesn't split it, and a link inside another's query stays there")
+    func oneLink() {
+        #expect(LinkText.links(in: "https://a/my file.zip") == ["https://a/my file.zip"])
+        #expect(LinkText.links(in: "https://a/go?to=https://b/") == ["https://a/go?to=https://b/"])
     }
 
     @Test("Persepolis's link test", arguments: [

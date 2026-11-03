@@ -150,6 +150,9 @@ public struct BatchDraft: Equatable, Sendable {
         public var isSelected = true
         /// Filled in by the Spider. Until then the name is unknown, and the server decides.
         public var name: String?
+
+        /// What the list shows: the name if known, otherwise the one the link itself gives the file.
+        public var shownName: String { name ?? Spider.fileName(inLink: link.url) }
     }
 
     public struct Addition: Sendable {
@@ -211,9 +214,11 @@ public enum BrowserRequestRoute: Equatable, Sendable {
 }
 
 public enum LinkText {
-    /// The links in a piece of text, one per line, as in a text file of links.
+    /// The links in a piece of text, one per line as in a text file of links. A single-line field can
+    /// turn a list's line breaks into spaces, so a space before another link separates them too.
     public static func links(in text: String) -> [String] {
         text.split(whereSeparator: \.isNewline)
+            .flatMap { $0.split(separator: /\s+(?=https?:\/\/)/) }
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter(looksLikeLink)
     }

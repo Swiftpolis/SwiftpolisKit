@@ -44,6 +44,11 @@ public enum Spider {
         }
     }
 
+    /// The name a file gets from its link alone, if the server doesn't name it.
+    public static func fileName(inLink link: String) -> String {
+        FileNaming.resolve(custom: nil, contentDisposition: nil, link: link)
+    }
+
     /// Failures are ignored, as in Persepolis: the name and size simply stay unknown.
     public static func look(
         at request: DownloadRequest,
