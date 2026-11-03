@@ -1,0 +1,56 @@
+import Foundation
+import SwiftpolisDomain
+
+/// One Download being fetched. HTTP, yt-dlp and torrent downloads all have this shape.
+public protocol DownloadEngine: Sendable {
+    /// Runs until the Download completes, fails or is stopped. Cancelling the task stops it.
+    func run() async
+    func pause()
+    func unpause()
+    func stop()
+    func setSpeedDial(_ dial: Int)
+    var snapshot: DownloadSnapshot { get }
+}
+
+/// The preferences an engine needs. Defaults match Persepolis's.
+public struct EngineSettings: Sendable {
+    public var timeout: TimeInterval = 10
+    public var maxTries = 5
+    public var retryWait: TimeInterval = 5
+    public var chunkSizeKiB = 100
+    public var verifiesCertificates = true
+    public var defaultFolder: String?
+    public var usesSubfolders = true
+    public var userAgent = "Swiftpolis/1.0"
+
+    public init() {}
+}
+
+/// Passwords for one Download. These come from the Keychain and are never stored with it.
+public struct DownloadSecrets: Sendable {
+    public var proxyPassword: String?
+    public var httpPassword: String?
+
+    public init(proxyPassword: String? = nil, httpPassword: String? = nil) {
+        self.proxyPassword = proxyPassword
+        self.httpPassword = httpPassword
+    }
+}
+
+public struct DownloadSnapshot: Hashable, Sendable {
+    public var status: DownloadStatus
+    public var fileName: String?
+    public var filePath: String?
+    public var totalBytes: Int64?
+    public var downloadedBytes: Int64
+    public var activeConnections: Int
+    public var bytesPerSecond: Double
+    public var secondsRemaining: Double?
+    public var errorMessage: String?
+
+    public var percent: Int {
+        if status == .complete { return 100 }
+        guard let totalBytes, totalBytes > 0 else { return 0 }
+        return Int(downloadedBytes * 100 / totalBytes)
+    }
+}

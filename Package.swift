@@ -8,11 +8,17 @@ let package = Package(
     products: [
         .library(name: "SwiftpolisDomain", targets: ["SwiftpolisDomain"]),
         .library(name: "SwiftpolisPersistence", targets: ["SwiftpolisPersistence"]),
+        .library(name: "SwiftpolisEngines", targets: ["SwiftpolisEngines"]),
     ],
     targets: [
         .target(name: "SwiftpolisDomain"),
         .target(name: "SwiftpolisPersistence", dependencies: ["SwiftpolisDomain"]),
+        .target(name: "SwiftpolisEngines", dependencies: ["SwiftpolisDomain"]),
         .target(name: "SwiftpolisTestSupport", dependencies: ["SwiftpolisDomain"]),
+        .testTarget(
+            name: "SwiftpolisEnginesTests",
+            dependencies: ["SwiftpolisDomain", "SwiftpolisEngines", "SwiftpolisTestSupport"]
+        ),
         .testTarget(
             name: "SwiftpolisDomainTests",
             dependencies: ["SwiftpolisDomain", "SwiftpolisTestSupport"]
