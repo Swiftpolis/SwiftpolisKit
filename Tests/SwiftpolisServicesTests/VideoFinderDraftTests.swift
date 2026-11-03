@@ -248,6 +248,28 @@ struct DownloadDraftEngineTests {
     }
 }
 
+@Suite("Dock icon")
+struct DockIconTests {
+    @Test func itFollowsOpenWindowsByDefault() {
+        let preferences = Preferences()
+        #expect(preferences.showsDockIcon(hasOpenWindows: true))
+        #expect(!preferences.showsDockIcon(hasOpenWindows: false))
+    }
+
+    @Test func theOptionKeepsIt() {
+        var preferences = Preferences()
+        preferences.keepsDockIconWithoutWindows = true
+        #expect(preferences.showsDockIcon(hasOpenWindows: false))
+    }
+
+    /// Otherwise the app would be running with no way to reach it.
+    @Test func itStaysWithoutAMenuBarItem() {
+        var preferences = Preferences()
+        preferences.showsMenuBarItem = false
+        #expect(preferences.showsDockIcon(hasOpenWindows: false))
+    }
+}
+
 @Suite("Helper updates")
 struct HelperInstallationTests {
     private struct Fixture {

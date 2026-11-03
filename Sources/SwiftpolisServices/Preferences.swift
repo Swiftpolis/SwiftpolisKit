@@ -25,8 +25,14 @@ public struct Preferences: Equatable, Sendable {
     public var startsBrowserRequestsImmediately = false
     public var checksClipboard = false
     public var videoFinderMaxLinks = 3
+    public var keepsDockIconWithoutWindows = false
 
     public init() {}
+
+    /// Whether the Dock shows the app. Without a menu bar item, the Dock is the only way back to it.
+    public func showsDockIcon(hasOpenWindows: Bool) -> Bool {
+        hasOpenWindows || keepsDockIconWithoutWindows || !showsMenuBarItem || !hidesWindowOnClose
+    }
 
     public var queueWait: QueueWait {
         QueueWait(hours: queueWaitHours, minutes: queueWaitMinutes)
@@ -76,6 +82,7 @@ public final class PreferencesStore: @unchecked Sendable {
             read(&value.startsBrowserRequestsImmediately, "startsBrowserRequestsImmediately")
             read(&value.checksClipboard, "checksClipboard")
             read(&value.videoFinderMaxLinks, "videoFinderMaxLinks")
+            read(&value.keepsDockIconWithoutWindows, "keepsDockIconWithoutWindows")
             return value
         }
         set {
@@ -99,6 +106,7 @@ public final class PreferencesStore: @unchecked Sendable {
             defaults.set(newValue.startsBrowserRequestsImmediately, forKey: "startsBrowserRequestsImmediately")
             defaults.set(newValue.checksClipboard, forKey: "checksClipboard")
             defaults.set(newValue.videoFinderMaxLinks, forKey: "videoFinderMaxLinks")
+            defaults.set(newValue.keepsDockIconWithoutWindows, forKey: "keepsDockIconWithoutWindows")
         }
     }
 
