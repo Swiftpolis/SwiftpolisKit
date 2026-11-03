@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import SwiftpolisBridge
 import SwiftpolisDomain
 import SwiftpolisEngines
 import SwiftpolisServices
@@ -145,8 +146,139 @@ struct DownloadDraftTests {
     }
 }
 
+@Suite("Draft from a browser")
+struct BrowserDraftTests {
+    @Test("a browser's link fills in the options, and its cookies go with the secrets")
+    func browserLink() {
+        var preferences = Preferences()
+        preferences.downloadFolder = "/d"
+        let link = BrowserLink(
+            url: "https://a/b.zip",
+            cookies: "c=1",
+            userAgent: "UA",
+            referrer: "https://a/",
+            fileName: "name.zip",
+            headers: "X: 1",
+            cookieFilePath: "/c.txt"
+        )
+
+        let draft = DownloadDraft(preferences: preferences, browserLink: link)
+
+        #expect(draft.request.link == "https://a/b.zip")
+        #expect(draft.request.customFileName == "name.zip")
+        #expect(draft.request.userAgent == "UA")
+        #expect(draft.request.referer == "https://a/")
+        #expect(draft.request.headers == "X: 1")
+        #expect(draft.request.cookieFilePath == "/c.txt")
+        #expect(draft.request.folder == "/d")
+        #expect(draft.secrets.cookieHeader == "c=1")
+    }
+}
+
+@Suite("Browser request routing")
+struct BrowserRequestRouterTests {
+    private let one = [BrowserLink(url: "https://a")]
+    private let two = [BrowserLink(url: "https://a"), BrowserLink(url: "https://b")]
+
+    @Test("one link opens Add Link")
+    func oneLink() {
+        #expect(BrowserRequestRoute(links: one, startsImmediately: false) == .addLink(one[0]))
+    }
+
+    @Test("one link starts straight away if Preferences say so")
+    func immediately() {
+        #expect(BrowserRequestRoute(links: one, startsImmediately: true) == .startNow(one[0]))
+    }
+
+    @Test("several links open the batch window, even with immediate start on")
+    func several() {
+        #expect(BrowserRequestRoute(links: two, startsImmediately: true) == .batch(two))
+    }
+
+    @Test("no links does nothing")
+    func none() {
+        #expect(BrowserRequestRoute(links: [], startsImmediately: false) == nil)
+    }
+}
+
+@Suite("Batch draft")
+struct BatchDraftTests {
+    private func draft(_ names: String...) -> BatchDraft {
+        var preferences = Preferences()
+        preferences.downloadFolder = "/d"
+        preferences.connections = 7
+        return BatchDraft(preferences: preferences, links: names.map { BrowserLink(url: "https://x/\($0)") })
+    }
+
+    @Test("every link starts selected, in order, with Preferences' options")
+    func starts() {
+        let batch = draft("a", "b")
+        #expect(batch.items.map(\.isSelected) == [true, true])
+        #expect(batch.items.map(\.link.url) == ["https://x/a", "https://x/b"])
+        #expect(batch.options.folder == "/d")
+        #expect(batch.options.connections == 7)
+    }
+
+    @Test("select all and deselect all")
+    func selection() {
+        var batch = draft("a", "b")
+        batch.setAllSelected(false)
+        #expect(!batch.hasSelection)
+        batch.setAllSelected(true)
+        #expect(batch.hasSelection)
+    }
+
+    @Test("Downloads are added last-first, so the list ends up in the order shown, as in Persepolis")
+    func addOrder() {
+        var batch = draft("a", "b", "c")
+        batch.items[1].isSelected = false
+
+        #expect(batch.selectedInAddingOrder.map(\.request.link) == ["https://x/c", "https://x/a"])
+    }
+
+    @Test("shared options apply to every link, and each keeps its own browser details")
+    func sharedOptions() {
+        var preferences = Preferences()
+        preferences.downloadFolder = "/d"
+        let links = [BrowserLink(url: "https://a", cookies: "c=1", userAgent: "UA", referrer: "https://r/")]
+        var batch = BatchDraft(preferences: preferences, links: links)
+        batch.options.folder = "/other"
+        batch.options.connections = 2
+        batch.options.usesProxy = true
+        batch.options.proxyHost = "h"
+        batch.options.proxyPort = 8
+        batch.options.proxyPassword = "pp"
+
+        let item = batch.selectedInAddingOrder[0]
+
+        #expect(item.request.folder == "/other")
+        #expect(item.request.connections == 2)
+        #expect(item.request.proxy?.host == "h")
+        #expect(item.request.userAgent == "UA")
+        #expect(item.request.referer == "https://r/")
+        #expect(item.secrets.proxyPassword == "pp")
+        #expect(item.secrets.cookieHeader == "c=1")
+    }
+
+    @Test("a name is only set once known, so no file is ever called *** (fixes D30)")
+    func names() {
+        var batch = draft("a", "b")
+        batch.items[0].name = "found.zip"
+
+        let items = batch.selectedInAddingOrder
+        #expect(items[1].request.customFileName == "found.zip")
+        #expect(items[0].request.customFileName == nil)
+    }
+}
+
 @Suite("Link text")
 struct LinkTextTests {
+    @Test("links are picked out of text, one per line, keeping their order")
+    func links() {
+        let text = "https://a/1\n  http://b/2  \nnot a link\n\nhttps://c/3"
+        #expect(LinkText.links(in: text) == ["https://a/1", "http://b/2", "https://c/3"])
+    }
+
     @Test("Persepolis's link test", arguments: [
         ("http://a", true),
         ("https://a", true),
@@ -158,5 +290,78 @@ struct LinkTextTests {
     ])
     func links(text: String, isLink: Bool) {
         #expect(LinkText.looksLikeLink(text) == isLink)
+    }
+}
+
+@Suite("Native host manifests")
+struct NativeHostManifestTests {
+    private func makeHome(browsers: [String]) throws -> URL {
+        let home = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        for browser in browsers {
+            try FileManager.default.createDirectory(
+                at: home.appending(path: "Library/Application Support/\(browser)"),
+                withIntermediateDirectories: true
+            )
+        }
+        return home
+    }
+
+    private func manifest(at path: String, home: URL) throws -> [String: Any] {
+        let data = try Data(contentsOf: home.appending(
+            path: "Library/Application Support/\(path)/NativeMessagingHosts/com.persepolis.pdmchromewrapper.json"
+        ))
+        return try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    }
+
+    @Test("a Chrome-family browser gets Persepolis's store extension allowed")
+    func chrome() throws {
+        let home = try makeHome(browsers: ["Google/Chrome"])
+        defer { try? FileManager.default.removeItem(at: home) }
+
+        NativeHostManifests.install(helperPath: "/App/helper", home: home)
+
+        let json = try manifest(at: "Google/Chrome", home: home)
+        #expect(json["name"] as? String == "com.persepolis.pdmchromewrapper")
+        #expect(json["type"] as? String == "stdio")
+        #expect(json["path"] as? String == "/App/helper")
+        #expect(json["allowed_origins"] as? [String] == ["chrome-extension://legimlagjjoghkoedakdjhocbeomojao/"])
+        #expect(json["allowed_extensions"] == nil)
+    }
+
+    @Test("Firefox gets its own key")
+    func firefox() throws {
+        let home = try makeHome(browsers: ["Mozilla"])
+        defer { try? FileManager.default.removeItem(at: home) }
+
+        NativeHostManifests.install(helperPath: "/App/helper", home: home)
+
+        let json = try manifest(at: "Mozilla", home: home)
+        #expect(json["allowed_extensions"] as? [String] == [
+            "com.persepolis.pdmchromewrapper@persepolisdm.github.io",
+            "com.persepolis.pdmchromewrapper.offline@persepolisdm.github.io",
+        ])
+        #expect(json["allowed_origins"] == nil)
+    }
+
+    @Test("every browser Persepolis supports is covered", arguments: [
+        "Google/Chrome", "Chromium", "Vivaldi", "Opera", "BraveSoftware/Brave-Browser", "Mozilla",
+    ])
+    func everyBrowser(browser: String) throws {
+        let home = try makeHome(browsers: [browser])
+        defer { try? FileManager.default.removeItem(at: home) }
+
+        NativeHostManifests.install(helperPath: "/App/helper", home: home)
+
+        _ = try manifest(at: browser, home: home)
+    }
+
+    @Test("a browser that isn't installed gets nothing")
+    func notInstalled() throws {
+        let home = try makeHome(browsers: [])
+        defer { try? FileManager.default.removeItem(at: home) }
+
+        NativeHostManifests.install(helperPath: "/App/helper", home: home)
+
+        #expect(!FileManager.default.fileExists(atPath: home.appending(path: "Library/Application Support/Google").path))
     }
 }

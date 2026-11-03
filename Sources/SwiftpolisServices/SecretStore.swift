@@ -3,7 +3,7 @@ import Security
 import SwiftpolisDomain
 import SwiftpolisEngines
 
-/// Where each Download's passwords live, away from the library.
+/// Where each Download's passwords and browser cookies live, away from the library.
 public protocol SecretStore: Sendable {
     func load(for gid: GID) -> DownloadSecrets
     func save(_ secrets: DownloadSecrets, for gid: GID)
@@ -29,11 +29,12 @@ public final class InMemorySecretStore: SecretStore, @unchecked Sendable {
     }
 }
 
-/// Stores passwords as generic passwords in the user's login Keychain.
+/// Stores secrets as generic passwords in the user's login Keychain.
 public struct KeychainSecretStore: SecretStore {
     private enum Slot: String, CaseIterable {
         case proxy
         case http
+        case cookie
     }
 
     private let service: String
@@ -43,12 +44,17 @@ public struct KeychainSecretStore: SecretStore {
     }
 
     public func load(for gid: GID) -> DownloadSecrets {
-        DownloadSecrets(proxyPassword: read(.proxy, gid), httpPassword: read(.http, gid))
+        DownloadSecrets(
+            proxyPassword: read(.proxy, gid),
+            httpPassword: read(.http, gid),
+            cookieHeader: read(.cookie, gid)
+        )
     }
 
     public func save(_ secrets: DownloadSecrets, for gid: GID) {
         write(secrets.proxyPassword, slot: .proxy, gid)
         write(secrets.httpPassword, slot: .http, gid)
+        write(secrets.cookieHeader, slot: .cookie, gid)
     }
 
     public func remove(for gid: GID) {

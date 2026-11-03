@@ -594,6 +594,57 @@ struct EngineRequestTests {
         #expect(fixture.server.gets[0].range == "bytes=0-1048575")
     }
 
+    @Test("cookies from a browser go on both HEAD and GET (fixes D8)")
+    func browserCookies() async throws {
+        let fixture = try await Fixture(.init(size: mib))
+        defer { fixture.cleanUp() }
+
+        let engine = fixture.engine(connections: 1, secrets: DownloadSecrets(cookieHeader: "session=abc; theme=dark"))
+        await engine.run()
+
+        #expect(engine.snapshot.status == .complete)
+        for request in fixture.server.requests {
+            #expect(request.headers["cookie"] == "session=abc; theme=dark")
+        }
+    }
+
+    @Test("cookies from a browser and a cookie file are both sent")
+    func bothKindsOfCookies() async throws {
+        let fixture = try await Fixture(.init(size: mib))
+        defer { fixture.cleanUp() }
+        let cookies = fixture.path("cookies.txt")
+        try "127.0.0.1\tFALSE\t/\tFALSE\t0\tfromfile\tyes\n".write(toFile: cookies, atomically: true, encoding: .utf8)
+
+        let engine = fixture.engine(connections: 1, secrets: DownloadSecrets(cookieHeader: "session=abc")) {
+            $0.cookieFilePath = cookies
+        }
+        await engine.run()
+
+        for request in fixture.server.requests {
+            let header = try #require(request.headers["cookie"])
+            #expect(header.contains("session=abc"))
+            #expect(header.contains("fromfile=yes"))
+        }
+    }
+
+    @Test("a browser's cookies aren't handed to a different host on a redirect")
+    func cookiesStayOnHost() async throws {
+        let target = MisbehavingServer(.init(size: mib))
+        try await target.start()
+        defer { target.stop() }
+        var behaviour = MisbehavingServer.Behaviour(size: mib)
+        behaviour.redirectTo = target.url("moved.bin", host: "localhost")
+        let fixture = try await Fixture(behaviour)
+        defer { fixture.cleanUp() }
+
+        let engine = fixture.engine(connections: 1, secrets: DownloadSecrets(cookieHeader: "session=abc"))
+        await engine.run()
+
+        #expect(engine.snapshot.status == .complete)
+        #expect(fixture.server.gets[0].headers["cookie"] == "session=abc")
+        #expect(target.gets.first?.headers["cookie"] == nil)
+    }
+
     @Test("the default user agent names the app")
     func defaultUserAgent() async throws {
         let fixture = try await Fixture(.init(size: mib))

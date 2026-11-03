@@ -84,6 +84,9 @@ struct KeychainSecretStoreTests {
         #expect(store.load(for: gid).proxyPassword == "proxy")
         #expect(store.load(for: gid).httpPassword == "http")
 
+        store.save(DownloadSecrets(cookieHeader: "a=1"), for: gid)
+        #expect(store.load(for: gid).cookieHeader == "a=1")
+
         store.save(DownloadSecrets(proxyPassword: "new"), for: gid)
         #expect(store.load(for: gid).proxyPassword == "new")
         #expect(store.load(for: gid).httpPassword == nil)

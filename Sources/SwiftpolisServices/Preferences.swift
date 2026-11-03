@@ -22,6 +22,8 @@ public struct Preferences: Equatable, Sendable {
     public var showsMenuBarItem = true
     public var hidesWindowOnClose = true
     public var keepsSystemAwake = false
+    public var startsBrowserRequestsImmediately = false
+    public var checksClipboard = false
 
     public init() {}
 
@@ -70,6 +72,8 @@ public final class PreferencesStore: @unchecked Sendable {
             read(&value.showsMenuBarItem, "showsMenuBarItem")
             read(&value.hidesWindowOnClose, "hidesWindowOnClose")
             read(&value.keepsSystemAwake, "keepsSystemAwake")
+            read(&value.startsBrowserRequestsImmediately, "startsBrowserRequestsImmediately")
+            read(&value.checksClipboard, "checksClipboard")
             return value
         }
         set {
@@ -90,6 +94,8 @@ public final class PreferencesStore: @unchecked Sendable {
             defaults.set(newValue.showsMenuBarItem, forKey: "showsMenuBarItem")
             defaults.set(newValue.hidesWindowOnClose, forKey: "hidesWindowOnClose")
             defaults.set(newValue.keepsSystemAwake, forKey: "keepsSystemAwake")
+            defaults.set(newValue.startsBrowserRequestsImmediately, forKey: "startsBrowserRequestsImmediately")
+            defaults.set(newValue.checksClipboard, forKey: "checksClipboard")
         }
     }
 

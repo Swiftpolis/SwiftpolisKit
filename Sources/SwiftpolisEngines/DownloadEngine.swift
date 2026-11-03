@@ -26,14 +26,17 @@ public struct EngineSettings: Sendable {
     public init() {}
 }
 
-/// Passwords for one Download. These come from the Keychain and are never stored with it.
+/// What one Download must keep private. This comes from the Keychain and is never stored with it.
 public struct DownloadSecrets: Sendable {
     public var proxyPassword: String?
     public var httpPassword: String?
+    /// The cookies a browser sent with this link, as a `Cookie` header's value.
+    public var cookieHeader: String?
 
-    public init(proxyPassword: String? = nil, httpPassword: String? = nil) {
+    public init(proxyPassword: String? = nil, httpPassword: String? = nil, cookieHeader: String? = nil) {
         self.proxyPassword = proxyPassword
         self.httpPassword = httpPassword
+        self.cookieHeader = cookieHeader
     }
 }
 

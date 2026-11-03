@@ -280,6 +280,15 @@ public actor DownloadCoordinator {
             Self.logger.error("Couldn't save a finished download: \(error.localizedDescription)")
         }
 
+        // A finished Download has no more use for a browser's login cookies. A stopped one still does.
+        if snapshot.status == .complete {
+            var kept = secrets.load(for: gid)
+            if kept.cookieHeader != nil {
+                kept.cookieHeader = nil
+                secrets.save(kept, for: gid)
+            }
+        }
+
         eventContinuation.yield(.finished(FinishedDownload(
             gid: gid,
             status: snapshot.status,

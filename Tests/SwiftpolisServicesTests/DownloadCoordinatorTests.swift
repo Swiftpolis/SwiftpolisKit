@@ -307,6 +307,41 @@ struct CoordinatorProgressTests {
         await waitUntil { fixture.events.latestProgress?.isEmpty == true }
     }
 
+    @Test("a finished Download forgets its browser cookies, but keeps its passwords")
+    func finishForgetsCookies() async throws {
+        let fixture = try await Fixture()
+        defer { fixture.cleanUp() }
+        let gid = try await fixture.coordinator.add(
+            fixture.request(),
+            secrets: DownloadSecrets(httpPassword: "pw", cookieHeader: "a=1"),
+            to: "Single Downloads",
+            startNow: true
+        )
+        await waitUntil { !fixture.engines.all.isEmpty }
+        #expect(fixture.engines.last?.secrets.cookieHeader == "a=1")
+
+        fixture.engines.last?.end(status: .complete)
+
+        await waitUntil { fixture.events.finished.count == 1 }
+        #expect(fixture.secrets.load(for: gid).cookieHeader == nil)
+        #expect(fixture.secrets.load(for: gid).httpPassword == "pw")
+    }
+
+    @Test("a stopped Download keeps its browser cookies, for resuming")
+    func stopKeepsCookies() async throws {
+        let fixture = try await Fixture()
+        defer { fixture.cleanUp() }
+        let gid = try await fixture.coordinator.add(
+            fixture.request(), secrets: DownloadSecrets(cookieHeader: "a=1"), to: "Single Downloads", startNow: true
+        )
+        await waitUntil { !fixture.engines.all.isEmpty }
+
+        fixture.engines.last?.end(status: .stopped)
+
+        await waitUntil { fixture.events.finished.count == 1 }
+        #expect(fixture.secrets.load(for: gid).cookieHeader == "a=1")
+    }
+
     @Test("an error's message is reported")
     func errorMessage() async throws {
         let fixture = try await Fixture()

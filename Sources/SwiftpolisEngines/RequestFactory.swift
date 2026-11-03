@@ -42,7 +42,22 @@ struct RequestFactory: Sendable {
         if let range {
             urlRequest.setValue(range, forHTTPHeaderField: "Range")
         }
+        if let browserCookies = secrets.cookieHeader {
+            // URLSession would replace this header with its own cookie store's, so the store's
+            // cookies are added by hand instead.
+            urlRequest.httpShouldHandleCookies = false
+            let cookies = [browserCookies, fileCookieHeader(for: urlRequest.url)].compactMap { $0 }
+            urlRequest.setValue(cookies.joined(separator: "; "), forHTTPHeaderField: "Cookie")
+        }
         return urlRequest
+    }
+
+    private func fileCookieHeader(for url: URL?) -> String? {
+        guard let url else { return nil }
+        let configuration = URLSessionConfiguration.ephemeral
+        applyCookies(to: configuration)
+        guard let cookies = configuration.httpCookieStorage?.cookies(for: url), !cookies.isEmpty else { return nil }
+        return HTTPCookie.requestHeaderFields(with: cookies)["Cookie"]
     }
 
     /// The words Persepolis uses for a failed request, shown to the user.
@@ -126,7 +141,7 @@ class RequestPolicyDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendab
         self.requests = requests
     }
 
-    /// Follows redirects, but doesn't hand the password to a different host.
+    /// Follows redirects, but doesn't hand a password or browser cookies to a different host.
     func urlSession(
         _ session: URLSession,
         task: URLSessionTask,
@@ -137,6 +152,7 @@ class RequestPolicyDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendab
         var redirected = newRequest
         if newRequest.url?.host != task.originalRequest?.url?.host {
             redirected.setValue(nil, forHTTPHeaderField: "Authorization")
+            redirected.setValue(nil, forHTTPHeaderField: "Cookie")
         }
         completionHandler(redirected)
     }

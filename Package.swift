@@ -10,21 +10,25 @@ let package = Package(
         .library(name: "SwiftpolisPersistence", targets: ["SwiftpolisPersistence"]),
         .library(name: "SwiftpolisEngines", targets: ["SwiftpolisEngines"]),
         .library(name: "SwiftpolisServices", targets: ["SwiftpolisServices"]),
+        .library(name: "SwiftpolisBridge", targets: ["SwiftpolisBridge"]),
     ],
     targets: [
+        // Used by the Safari extension and the native-messaging helper, so it stays small.
+        .target(name: "SwiftpolisBridge"),
+        .testTarget(name: "SwiftpolisBridgeTests", dependencies: ["SwiftpolisBridge"]),
         .target(name: "SwiftpolisDomain"),
         .target(name: "SwiftpolisPersistence", dependencies: ["SwiftpolisDomain"]),
         .target(name: "SwiftpolisEngines", dependencies: ["SwiftpolisDomain"]),
         .target(
             name: "SwiftpolisServices",
-            dependencies: ["SwiftpolisDomain", "SwiftpolisEngines", "SwiftpolisPersistence"]
+            dependencies: ["SwiftpolisBridge", "SwiftpolisDomain", "SwiftpolisEngines", "SwiftpolisPersistence"]
         ),
         .target(name: "SwiftpolisTestSupport", dependencies: ["SwiftpolisDomain", "SwiftpolisEngines"]),
         .testTarget(
             name: "SwiftpolisServicesTests",
             dependencies: [
-                "SwiftpolisDomain", "SwiftpolisEngines", "SwiftpolisPersistence", "SwiftpolisServices",
-                "SwiftpolisTestSupport",
+                "SwiftpolisBridge", "SwiftpolisDomain", "SwiftpolisEngines", "SwiftpolisPersistence",
+                "SwiftpolisServices", "SwiftpolisTestSupport",
             ]
         ),
         .testTarget(

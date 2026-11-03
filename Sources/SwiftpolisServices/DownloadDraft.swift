@@ -1,4 +1,5 @@
 import Foundation
+import SwiftpolisBridge
 import SwiftpolisDomain
 import SwiftpolisEngines
 
@@ -31,11 +32,28 @@ public struct DownloadDraft: Equatable, Sendable {
     public var userAgent = ""
     public var headers = ""
     public var cookieFilePath = ""
+    /// A browser's cookies. They travel with the Download but aren't shown for editing.
+    public var cookieHeader: String?
 
     /// A blank draft, for adding a Download.
     public init(preferences: Preferences) {
         folder = preferences.downloadFolder
         connections = preferences.connections
+    }
+
+    /// A draft of a link from a browser.
+    public init(preferences: Preferences, browserLink link: BrowserLink) {
+        self.init(preferences: preferences)
+        self.link = link.url
+        if let name = link.fileName {
+            changesName = true
+            customName = name
+        }
+        userAgent = link.userAgent ?? ""
+        referer = link.referrer ?? ""
+        headers = link.headers ?? ""
+        cookieFilePath = link.cookieFilePath ?? ""
+        cookieHeader = link.cookies
     }
 
     /// A draft of an existing Download, for its Properties window.
@@ -66,6 +84,7 @@ public struct DownloadDraft: Equatable, Sendable {
         usesLogin = request.httpUser != nil
         loginUser = request.httpUser ?? ""
         loginPassword = secrets.httpPassword ?? ""
+        cookieHeader = secrets.cookieHeader
         referer = request.referer ?? ""
         userAgent = request.userAgent ?? ""
         headers = request.headers ?? ""
@@ -108,7 +127,8 @@ public struct DownloadDraft: Equatable, Sendable {
     public var secrets: DownloadSecrets {
         DownloadSecrets(
             proxyPassword: usesProxy ? Self.nonEmpty(proxyPassword) : nil,
-            httpPassword: usesLogin ? Self.nonEmpty(loginPassword) : nil
+            httpPassword: usesLogin ? Self.nonEmpty(loginPassword) : nil,
+            cookieHeader: cookieHeader
         )
     }
 
@@ -118,7 +138,82 @@ public struct DownloadDraft: Equatable, Sendable {
     }
 }
 
+/// What the batch window edits: links to pick from, and options they all share.
+public struct BatchDraft: Equatable, Sendable {
+    public struct Item: Equatable, Identifiable, Sendable {
+        public let id: Int
+        public let link: BrowserLink
+        public var isSelected = true
+        /// Filled in by the Spider. Until then the name is unknown, and the server decides.
+        public var name: String?
+    }
+
+    public struct Addition: Sendable {
+        public let request: DownloadRequest
+        public let secrets: DownloadSecrets
+    }
+
+    public var items: [Item]
+    /// The link in here is ignored, as each item has its own.
+    public var options: DownloadDraft
+
+    public init(preferences: Preferences, links: [BrowserLink]) {
+        items = links.enumerated().map { Item(id: $0.offset, link: $0.element, name: $0.element.fileName) }
+        options = DownloadDraft(preferences: preferences)
+    }
+
+    public var hasSelection: Bool { items.contains(where: \.isSelected) }
+
+    public mutating func setAllSelected(_ isSelected: Bool) {
+        for index in items.indices { items[index].isSelected = isSelected }
+    }
+
+    /// What to add. The list shows the newest first, so adding from the bottom up leaves the list in
+    /// the order shown here, and a Queue runs from the top.
+    public var selectedInAddingOrder: [Addition] {
+        items.reversed().filter(\.isSelected).map { item in
+            var draft = DownloadDraft(preferences: Preferences(), browserLink: item.link)
+            draft.changesName = item.name != nil
+            draft.customName = item.name ?? ""
+            draft.folder = options.folder
+            draft.connections = options.connections
+            draft.usesProxy = options.usesProxy
+            draft.proxyKind = options.proxyKind
+            draft.proxyHost = options.proxyHost
+            draft.proxyPort = options.proxyPort
+            draft.proxyUser = options.proxyUser
+            draft.proxyPassword = options.proxyPassword
+            draft.usesLogin = options.usesLogin
+            draft.loginUser = options.loginUser
+            draft.loginPassword = options.loginPassword
+            return Addition(request: draft.request, secrets: draft.secrets)
+        }
+    }
+}
+
+/// Where a Browser request goes, from Persepolis's `checkPluginCall`.
+public enum BrowserRequestRoute: Equatable, Sendable {
+    case addLink(BrowserLink)
+    case startNow(BrowserLink)
+    case batch([BrowserLink])
+
+    public init?(links: [BrowserLink], startsImmediately: Bool) {
+        switch links.count {
+        case 0: return nil
+        case 1: self = startsImmediately ? .startNow(links[0]) : .addLink(links[0])
+        default: self = .batch(links)
+        }
+    }
+}
+
 public enum LinkText {
+    /// The links in a piece of text, one per line, as in a text file of links.
+    public static func links(in text: String) -> [String] {
+        text.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter(looksLikeLink)
+    }
+
     /// Persepolis's test for whether copied text is a link. In practice this means it starts with
     /// `http://` or `https://`, or something the same shape.
     public static func looksLikeLink(_ text: String) -> Bool {
@@ -128,5 +223,57 @@ public enum LinkText {
             return String(characters[start..<min(end, characters.count)]).contains(needle)
         }
         return contains("tp:/", from: 2, to: 6) || contains("tps:/", from: 2, to: 7)
+    }
+}
+
+/// The files that let Chrome-family browsers and Firefox start the helper.
+public enum NativeHostManifests {
+    private static let hostName = "com.persepolis.pdmchromewrapper"
+    private static let chromeFamily = [
+        "Google/Chrome", "Chromium", "Vivaldi", "Opera", "BraveSoftware/Brave-Browser",
+    ]
+    private static let firefox = "Mozilla"
+
+    /// Writes a manifest for each browser that's installed. Unlike Persepolis, this leaves no folders
+    /// behind for browsers the user doesn't have.
+    public static func install(helperPath: String, home: URL) {
+        let support = home.appending(path: "Library/Application Support", directoryHint: .isDirectory)
+        for browser in chromeFamily {
+            write(
+                ["allowed_origins": ["chrome-extension://legimlagjjoghkoedakdjhocbeomojao/"]],
+                helperPath: helperPath,
+                browser: browser,
+                support: support
+            )
+        }
+        write(
+            ["allowed_extensions": [
+                "com.persepolis.pdmchromewrapper@persepolisdm.github.io",
+                "com.persepolis.pdmchromewrapper.offline@persepolisdm.github.io",
+            ]],
+            helperPath: helperPath,
+            browser: firefox,
+            support: support
+        )
+    }
+
+    private static func write(_ allowed: [String: [String]], helperPath: String, browser: String, support: URL) {
+        let manager = FileManager.default
+        let browserFolder = support.appending(path: browser, directoryHint: .isDirectory)
+        guard manager.fileExists(atPath: browserFolder.path) else { return }
+
+        var manifest: [String: Any] = [
+            "name": hostName,
+            "type": "stdio",
+            "path": helperPath,
+            "description": "Integrate Swiftpolis with \(browser) using WebExtensions",
+        ]
+        manifest.merge(allowed) { _, new in new }
+
+        let folder = browserFolder.appending(path: "NativeMessagingHosts", directoryHint: .isDirectory)
+        guard let data = try? JSONSerialization.data(withJSONObject: manifest, options: [.prettyPrinted, .sortedKeys]),
+              (try? manager.createDirectory(at: folder, withIntermediateDirectories: true)) != nil
+        else { return }
+        try? data.write(to: folder.appending(path: hostName + ".json"), options: .atomic)
     }
 }
