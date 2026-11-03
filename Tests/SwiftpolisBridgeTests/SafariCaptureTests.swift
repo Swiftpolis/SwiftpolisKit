@@ -2,16 +2,20 @@ import Foundation
 import JavaScriptCore
 import Testing
 
-/// Runs the Safari extension's real capture script, because that's the code Safari will run.
-@Suite("Safari click capture")
-struct SafariCaptureTests {
-    private static let scriptURL = URL(filePath: #filePath)
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .appending(path: "SafariExtension/Resources/contentScripts/capture.js")
+private let captureScriptURL = URL(filePath: #filePath)
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+    .appending(path: "SafariExtension/Resources/contentScripts/capture.js")
 
+/// Runs the Safari extension's real capture script, because that's the code Safari will run. The script
+/// lives in the app's repository, so outside it these tests don't run.
+@Suite(
+    "Safari click capture",
+    .enabled(if: FileManager.default.fileExists(atPath: captureScriptURL.path))
+)
+struct SafariCaptureTests {
     private func shouldCapture(
         _ url: String,
         enabled: Bool = true,
@@ -19,7 +23,7 @@ struct SafariCaptureTests {
         hasDownloadAttribute: Bool = false
     ) throws -> Bool {
         let context = try #require(JSContext())
-        let script = try String(contentsOf: Self.scriptURL, encoding: .utf8)
+        let script = try String(contentsOf: captureScriptURL, encoding: .utf8)
         context.evaluateScript(script)
         let function = try #require(context.objectForKeyedSubscript("swiftpolisShouldCapture"))
         let result = function.call(withArguments: [

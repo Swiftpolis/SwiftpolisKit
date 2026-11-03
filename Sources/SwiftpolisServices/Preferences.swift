@@ -26,6 +26,7 @@ public struct Preferences: Equatable, Sendable {
     public var checksClipboard = false
     public var videoFinderMaxLinks = 3
     public var keepsDockIconWithoutWindows = false
+    public var checksForUpdates = true
 
     public init() {}
 
@@ -83,6 +84,7 @@ public final class PreferencesStore: @unchecked Sendable {
             read(&value.checksClipboard, "checksClipboard")
             read(&value.videoFinderMaxLinks, "videoFinderMaxLinks")
             read(&value.keepsDockIconWithoutWindows, "keepsDockIconWithoutWindows")
+            read(&value.checksForUpdates, "checksForUpdates")
             return value
         }
         set {
@@ -107,6 +109,7 @@ public final class PreferencesStore: @unchecked Sendable {
             defaults.set(newValue.checksClipboard, forKey: "checksClipboard")
             defaults.set(newValue.videoFinderMaxLinks, forKey: "videoFinderMaxLinks")
             defaults.set(newValue.keepsDockIconWithoutWindows, forKey: "keepsDockIconWithoutWindows")
+            defaults.set(newValue.checksForUpdates, forKey: "checksForUpdates")
         }
     }
 
@@ -114,6 +117,12 @@ public final class PreferencesStore: @unchecked Sendable {
     public var lastYtDlpUpdateCheck: Date? {
         get { defaults.object(forKey: "lastYtDlpUpdateCheck") as? Date }
         set { defaults.set(newValue, forKey: "lastYtDlpUpdateCheck") }
+    }
+
+    /// When the app last looked for a newer version of itself.
+    public var lastAppUpdateCheck: Date? {
+        get { defaults.object(forKey: "lastAppUpdateCheck") as? Date }
+        set { defaults.set(newValue, forKey: "lastAppUpdateCheck") }
     }
 
     private func read<Value>(_ value: inout Value, _ key: String) {
