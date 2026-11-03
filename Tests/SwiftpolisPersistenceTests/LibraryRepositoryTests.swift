@@ -17,6 +17,26 @@ struct LibraryRepositoryTests {
         DownloadRequest(link: link, folder: "/Downloads", connections: 64)
     }
 
+    @Test("saved paths follow the app's folder when iOS moves it, and others stay")
+    func movingSavedPaths() async throws {
+        let repository = try await makeRepository()
+        let inside = try await repository.addDownload(
+            DownloadRequest(link: "https://a/1", folder: "/old/Documents/Videos", connections: 1),
+            to: "Single Downloads", status: .stopped, at: date
+        )
+        let outside = try await repository.addDownload(
+            DownloadRequest(link: "https://a/2", folder: "/older/Documents", connections: 1),
+            to: "Single Downloads", status: .stopped, at: date
+        )
+        try await repository.updateFilePath("/old/Documents/Videos/a.mkv", for: inside)
+
+        try await repository.moveSavedPaths(from: "/old/Documents", to: "/new/Documents")
+
+        #expect(try await repository.download(inside)?.request.folder == "/new/Documents/Videos")
+        #expect(try await repository.download(inside)?.filePath == "/new/Documents/Videos/a.mkv")
+        #expect(try await repository.download(outside)?.request.folder == "/older/Documents")
+    }
+
     // MARK: Categories
 
     @Test("a new library has the built-in Categories in order")

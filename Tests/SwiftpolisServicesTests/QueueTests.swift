@@ -79,7 +79,7 @@ private struct Fixture {
     let coordinator: DownloadCoordinator
     let queue = "Scheduled Downloads"
 
-    init() async throws {
+    init(handsQueuesToSystem: Bool = false) async throws {
         library = LibraryRepository(modelContainer: try LibraryStore.makeInMemoryContainer())
         try await library.prepareForLaunch()
         let recorder = self.recorder
@@ -91,8 +91,9 @@ private struct Fixture {
             tick: .milliseconds(2),
             queueWait: { recorder.wait },
             shutDown: { recorder.recordShutdown() },
-            makeEngine: { recorder.make($0, $1) },
-            spider: { _, _ in Spider.Findings() }
+            makeEngine: { recorder.make($1, $2) },
+            spider: { _, _ in Spider.Findings() },
+            handsQueuesToSystem: handsQueuesToSystem
         )
         recorder.listen(to: coordinator.events)
     }
@@ -670,5 +671,88 @@ struct ShutdownTests {
 
         fixture.recorder.engines[1].end(status: .stopped)
         await eventually { fixture.recorder.shutdownCount == 1 }
+    }
+}
+
+@Suite("Queue: handed to the system, as on iOS")
+struct QueueHandedOverTests {
+    @Test("every Download starts straight away, in the Queue's order")
+    func allAtOnce() async throws {
+        let fixture = try await Fixture(handsQueuesToSystem: true)
+        try await fixture.add("a", "b", "c")
+        try await fixture.start()
+
+        await eventually { fixture.recorder.engines.count == 3 }
+        #expect(fixture.recorder.startedLinks == ["c", "b", "a"])
+
+        for engine in fixture.recorder.engines { engine.end(status: .complete) }
+        await eventually { fixture.clock.sleeperCount >= 1 }
+        fixture.clock.advance(by: .seconds(3))
+        await fixture.waitForFinish()
+        #expect(fixture.recorder.outcomes == [.completed])
+    }
+
+    @Test("only what failed goes round again")
+    func failuresGetAnotherPass() async throws {
+        let fixture = try await Fixture(handsQueuesToSystem: true)
+        try await fixture.add("a", "b")
+        try await fixture.start()
+
+        await eventually { fixture.recorder.engines.count == 2 }
+        fixture.recorder.engines[0].end(status: .complete)
+        fixture.recorder.engines[1].end(status: .error)
+        await eventually { fixture.clock.sleeperCount >= 1 }
+        fixture.clock.advance(by: .seconds(3))
+
+        await eventually { fixture.recorder.engines.count == 3 }
+        #expect(fixture.recorder.startedLinks == ["b", "a", "a"])
+        fixture.recorder.engines[2].end(status: .complete)
+        await eventually { fixture.clock.sleeperCount >= 1 }
+        fixture.clock.advance(by: .seconds(3))
+        await fixture.waitForFinish()
+    }
+
+    @Test("stopping the Queue stops all of them, and nothing goes round again")
+    func stopping() async throws {
+        let fixture = try await Fixture(handsQueuesToSystem: true)
+        try await fixture.add("a", "b")
+        try await fixture.start()
+
+        await eventually { fixture.recorder.engines.count == 2 }
+        try await Task.sleep(for: .milliseconds(120))
+        await fixture.coordinator.stopQueue(fixture.queue)
+        await eventually {
+            fixture.recorder.engines.allSatisfy { $0.recordedCalls.contains("stop") }
+        }
+        for engine in fixture.recorder.engines { engine.end() }
+
+        await fixture.waitForFinish()
+        #expect(fixture.recorder.outcomes == [.stoppedByUser])
+        #expect(fixture.recorder.engines.count == 2)
+    }
+
+    @Test("after a relaunch, a Queue with a Download the system kept starts again")
+    func adoptingAQueuedDownload() async throws {
+        let fixture = try await Fixture(handsQueuesToSystem: true)
+        let gids = try await fixture.add("a", "b")
+
+        await fixture.coordinator.adopt([gids[0]])
+
+        await eventually { fixture.recorder.engines.count == 2 }
+        #expect(fixture.recorder.runningQueues == [fixture.queue])
+    }
+
+    @Test("after a relaunch, a Single Download the system kept carries on alone")
+    func adoptingASingleDownload() async throws {
+        let fixture = try await Fixture(handsQueuesToSystem: true)
+        let request = DownloadRequest(link: "https://x/kept", folder: "/d", connections: 1)
+        let gid = try await fixture.coordinator.add(
+            request, secrets: DownloadSecrets(), to: CategoryKind.singleDownloadsName, startNow: false
+        )
+
+        await fixture.coordinator.adopt([gid])
+
+        await eventually { fixture.recorder.engines.count == 1 }
+        #expect(fixture.recorder.startedLinks == ["kept"])
     }
 }

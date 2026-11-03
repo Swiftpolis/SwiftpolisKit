@@ -4,7 +4,7 @@ import PackageDescription
 
 let package = Package(
     name: "SwiftpolisKit",
-    platforms: [.macOS("27.0")],
+    platforms: [.macOS("27.0"), .iOS("18.0")],
     products: [
         .library(name: "SwiftpolisDomain", targets: ["SwiftpolisDomain"]),
         .library(name: "SwiftpolisPersistence", targets: ["SwiftpolisPersistence"]),

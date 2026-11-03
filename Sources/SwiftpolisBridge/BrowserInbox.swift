@@ -1,4 +1,6 @@
+#if canImport(AppKit)
 import AppKit
+#endif
 import Foundation
 
 /// A folder of Browser requests, shared by the browsers' helpers and the app.
@@ -25,6 +27,7 @@ public struct BrowserInbox: Sendable {
             .map { BrowserInbox(folder: $0.appending(path: "Inbox", directoryHint: .isDirectory)) }
     }
 
+    #if canImport(AppKit)
     /// Launches the app, or tells it there's something new. The link carries no data, so a web page
     /// opening it can achieve nothing but an empty check of the inbox.
     ///
@@ -39,6 +42,7 @@ public struct BrowserInbox: Sendable {
         }
         _ = finished.wait(timeout: .now() + 5)
     }
+    #endif
 
     public func write(_ links: [BrowserLink], at date: Date = Date()) throws {
         let manager = FileManager.default

@@ -83,7 +83,7 @@ private struct Fixture {
             secrets: secrets,
             clock: ManualClock(now: Self.now),
             tick: .milliseconds(5),
-            makeEngine: { engines.make($0, $1) },
+            makeEngine: { engines.make($1, $2) },
             spider: { _, _ in spider }
         )
         events.listen(to: coordinator.events)
@@ -621,7 +621,7 @@ struct CoordinatorEndToEndTests {
             library: library,
             secrets: InMemorySecretStore(),
             tick: .milliseconds(20),
-            makeEngine: { HTTPDownloadEngine(request: $0, secrets: $1, settings: frozen) },
+            makeEngine: { HTTPDownloadEngine(request: $1, secrets: $2, settings: frozen) },
             spider: { await Spider.look(at: $0, secrets: $1, settings: frozen) }
         )
         events.listen(to: coordinator.events)

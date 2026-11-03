@@ -79,7 +79,7 @@ public enum DownloadRefusal: Equatable, Sendable {
 /// Runs Downloads: starts their engines, reports progress, and applies Persepolis's rules about
 /// who may do what. See docs/features.md.
 public actor DownloadCoordinator {
-    public typealias EngineFactory = @Sendable (DownloadRequest, DownloadSecrets) -> any DownloadEngine
+    public typealias EngineFactory = @Sendable (GID, DownloadRequest, DownloadSecrets) -> any DownloadEngine
     public typealias SpiderFunction = @Sendable (DownloadRequest, DownloadSecrets) async -> Spider.Findings
     /// Combines a video file and an audio file, given the folder the Download was added with.
     public typealias MuxFunction = @Sendable (String, String, String) async -> Result<VideoMuxer.Output, VideoMuxer.Failure>
@@ -96,6 +96,8 @@ public actor DownloadCoordinator {
         var shutsDownAfterwards = false
         var speedDial = SpeedDial.maximum
         var currentDownload: GID?
+        /// Everything given to the system at once, when Queues work that way.
+        var handedOver: [GID] = []
     }
 
     /// A Video pair at work, from its first stream to the end of Muxing.
@@ -117,6 +119,8 @@ public actor DownloadCoordinator {
     private let makeEngine: EngineFactory
     private let spider: SpiderFunction
     private let mux: MuxFunction
+    private let handsQueuesToSystem: Bool
+    private let discardKept: @Sendable (GID) -> Void
 
     private var sessions: [GID: Session] = [:]
     private var isTicking = false
@@ -145,7 +149,9 @@ public actor DownloadCoordinator {
         shutDown: @escaping @Sendable () async -> Void = {},
         makeEngine: @escaping EngineFactory,
         spider: @escaping SpiderFunction,
-        mux: @escaping MuxFunction = { _, _, _ in .failure(.failed(message: "muxing error")) }
+        mux: @escaping MuxFunction = { _, _, _ in .failure(.failed(message: "muxing error")) },
+        handsQueuesToSystem: Bool = false,
+        discardKept: @escaping @Sendable (GID) -> Void = { _ in }
     ) {
         self.library = library
         self.secrets = secrets
@@ -157,6 +163,8 @@ public actor DownloadCoordinator {
         self.makeEngine = makeEngine
         self.spider = spider
         self.mux = mux
+        self.handsQueuesToSystem = handsQueuesToSystem
+        self.discardKept = discardKept
         (events, eventContinuation) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(64))
     }
 
@@ -322,9 +330,13 @@ public actor DownloadCoordinator {
         onEnd: (@Sendable (DownloadSnapshot) -> Void)?
     ) async throws {
         try await library.recordStart(of: gid, status: .waiting, at: clock.now)
-        var engine = makeEngine(request, secrets.load(for: gid))
+        var engine = makeEngine(gid, request, secrets.load(for: gid))
         if let window {
-            engine = ScheduledDownload(engine: engine, window: window, clock: clock)
+            if window.end == nil, let start = window.start, let selfScheduling = engine as? any SelfSchedulingEngine {
+                selfScheduling.begin(notBefore: start)
+            } else {
+                engine = ScheduledDownload(engine: engine, window: window, clock: clock)
+            }
         }
         if let speedDial, speedDial != SpeedDial.maximum { engine.setSpeedDial(speedDial) }
         sessions[gid] = Session(engine: engine, onEnd: onEnd)
@@ -583,6 +595,7 @@ public actor DownloadCoordinator {
                 refusals.append(.fileNotFound(fileName: name))
             }
             secrets.remove(for: gid)
+            discardKept(gid)
             removable.append(gid)
         }
 
@@ -631,6 +644,7 @@ public actor DownloadCoordinator {
         guard !hasActiveDownloads else { throw DownloadControlError.downloadsActive }
         for download in try await library.downloads(in: CategoryKind.allDownloadsName) {
             secrets.remove(for: download.gid)
+            discardKept(download.gid)
         }
         try await library.clearList()
         eventContinuation.yield(.listChanged)
@@ -719,6 +733,7 @@ public actor DownloadCoordinator {
         guard queues[name] == nil else { throw DownloadControlError.queueRunning(name) }
         for download in try await library.downloads(in: name) {
             secrets.remove(for: download.gid)
+            discardKept(download.gid)
         }
         try await library.removeQueue(named: name)
         eventContinuation.yield(.listChanged)
@@ -745,7 +760,13 @@ public actor DownloadCoordinator {
         }
         queues[name] = QueueRun()
         publishQueues()
-        Task { await runQueue(name, options: options) }
+        Task {
+            if handsQueuesToSystem {
+                await runQueueHandedOver(name, options: options)
+            } else {
+                await runQueue(name, options: options)
+            }
+        }
     }
 
     /// Stops a Queue. Its After-download shutdown is cancelled with it.
@@ -755,6 +776,9 @@ public actor DownloadCoordinator {
         queues[name]?.shutsDownAfterwards = false
         if let current = queues[name]?.currentDownload {
             sessions[current]?.engine.stop()
+        }
+        for gid in queues[name]?.handedOver ?? [] {
+            sessions[gid]?.engine.stop()
         }
     }
 
@@ -818,6 +842,71 @@ public actor DownloadCoordinator {
         }
 
         finishQueue(name, outcome: outcome)
+    }
+
+    /// For iOS, where the app can't start the next Download when suspended. Every Download goes to the
+    /// system straight away, which runs them as it sees fit, and Passes still give failures more
+    /// tries. See docs/adr/0010-ios-downloads-belong-to-the-system.md.
+    private func runQueueHandedOver(_ name: String, options: QueueOptions) async {
+        let window = ScheduleWindow(
+            start: options.startTimeEnabled ? options.startTime : nil,
+            end: nil,
+            now: clock.now,
+            calendar: calendar
+        )
+        var outcome = QueueOutcome.completed
+
+        for pass in 0..<Self.passesPerQueueRun {
+            guard let listed = try? await library.downloads(in: name) else { break }
+            let downloads = (options.isReversed ? listed.reversed() : listed).filter { $0.status != .complete }
+            if downloads.isEmpty { break }
+            let startedAt = clock.now
+            queues[name]?.handedOver = downloads.map(\.gid)
+
+            await withTaskGroup(of: Void.self) { group in
+                for download in downloads where queues[name]?.isStopRequested != true {
+                    let start = pass == 0 ? window.start : nil
+                    group.addTask {
+                        _ = await self.runToEnd(
+                            download.gid,
+                            request: download.request,
+                            window: start.map { ScheduleWindow(start: $0, end: nil) },
+                            speedDial: nil
+                        )
+                    }
+                    // Long enough for each to reach the system in the Queue's order.
+                    try? await Task.sleep(for: .milliseconds(50))
+                }
+            }
+
+            if queues[name]?.isStopRequested == true {
+                outcome = .stoppedByUser
+                break
+            }
+            try? await clock.sleep(until: startedAt.addingTimeInterval(Self.minimumTimePerQueuedDownload))
+        }
+
+        finishQueue(name, outcome: outcome)
+    }
+
+    /// After a relaunch, takes back what the system kept going while the app was gone. A Queue with
+    /// any of them in it starts again, which picks them up.
+    public func adopt(_ gids: [GID]) async {
+        var queueNames: Set<String> = []
+        for gid in gids {
+            guard sessions[gid] == nil, let download = try? await library.download(gid) else {
+                discardKept(gid)
+                continue
+            }
+            if CategoryKind(categoryName: download.category) == .queue {
+                queueNames.insert(download.category)
+            } else {
+                try? await startSession(gid, request: download.request)
+            }
+        }
+        for name in queueNames {
+            try? await startQueue(name)
+        }
     }
 
     /// Runs one Download to its end, and returns how it ended.

@@ -1,6 +1,7 @@
 import Foundation
 import Synchronization
 
+#if os(macOS)
 /// Runs one of the bundled programs and hands over its output.
 ///
 /// Stopping asks politely first, because yt-dlp tidies up after an interrupt and leaves a partial
@@ -207,3 +208,23 @@ public final class HelperProcess: Sendable {
 private final class UncheckedProcess: @unchecked Sendable {
     let value = Process()
 }
+#else
+/// iOS can't run other programs, so anything needing one fails as if the program were missing.
+public final class HelperProcess: Sendable {
+    public struct Ending: Sendable {
+        public let exitCode: Int32
+        public let output: Data
+        public let errorText: String
+    }
+
+    public init(path: String, arguments: [String], onLine: (@Sendable (String) -> Void)? = nil) {}
+
+    public static func terminateAll() {}
+
+    public func run() async -> Ending {
+        Ending(exitCode: -1, output: Data(), errorText: "iOS can't run other programs")
+    }
+
+    public func stop() {}
+}
+#endif

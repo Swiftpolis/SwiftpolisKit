@@ -12,8 +12,12 @@ public struct Preferences: Equatable, Sendable {
     public var queueWaitHours = 0
     public var queueWaitMinutes = 0
     public var verifiesCertificates = true
+    #if os(macOS)
     public var downloadFolder = FileManager.default.homeDirectoryForCurrentUser
         .appending(path: "Downloads/Swiftpolis", directoryHint: .isDirectory).path
+    #else
+    public var downloadFolder = URL.documentsDirectory.path
+    #endif
     public var usesSubfolders = true
     public var playsSounds = true
     public var soundVolumePercent = 100
@@ -27,6 +31,7 @@ public struct Preferences: Equatable, Sendable {
     public var videoFinderMaxLinks = 3
     public var keepsDockIconWithoutWindows = false
     public var checksForUpdates = true
+    public var allowsCellularData = true
 
     public init() {}
 
@@ -48,6 +53,7 @@ public struct Preferences: Equatable, Sendable {
         settings.verifiesCertificates = verifiesCertificates
         settings.defaultFolder = downloadFolder
         settings.usesSubfolders = usesSubfolders
+        settings.allowsCellularData = allowsCellularData
         return settings
     }
 }
@@ -85,6 +91,7 @@ public final class PreferencesStore: @unchecked Sendable {
             read(&value.videoFinderMaxLinks, "videoFinderMaxLinks")
             read(&value.keepsDockIconWithoutWindows, "keepsDockIconWithoutWindows")
             read(&value.checksForUpdates, "checksForUpdates")
+            read(&value.allowsCellularData, "allowsCellularData")
             return value
         }
         set {
@@ -110,6 +117,7 @@ public final class PreferencesStore: @unchecked Sendable {
             defaults.set(newValue.videoFinderMaxLinks, forKey: "videoFinderMaxLinks")
             defaults.set(newValue.keepsDockIconWithoutWindows, forKey: "keepsDockIconWithoutWindows")
             defaults.set(newValue.checksForUpdates, forKey: "checksForUpdates")
+            defaults.set(newValue.allowsCellularData, forKey: "allowsCellularData")
         }
     }
 

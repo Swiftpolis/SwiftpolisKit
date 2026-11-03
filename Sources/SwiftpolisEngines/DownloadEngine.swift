@@ -12,6 +12,11 @@ public protocol DownloadEngine: Sendable {
     var snapshot: DownloadSnapshot { get }
 }
 
+/// An engine the system itself can hold back until a Start time, even with the app gone.
+public protocol SelfSchedulingEngine: DownloadEngine {
+    func begin(notBefore date: Date)
+}
+
 /// The preferences an engine needs. Defaults match Persepolis's.
 public struct EngineSettings: Sendable {
     public var timeout: TimeInterval = 10
@@ -22,6 +27,7 @@ public struct EngineSettings: Sendable {
     public var defaultFolder: String?
     public var usesSubfolders = true
     public var userAgent = "Swiftpolis/1.0"
+    public var allowsCellularData = true
 
     public init() {}
 }

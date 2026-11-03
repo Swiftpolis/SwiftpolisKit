@@ -36,6 +36,18 @@ public actor LibraryRepository {
         try modelContext.save()
     }
 
+    /// iOS moves an app's folders when it updates the app, so saved paths have to follow.
+    public func moveSavedPaths(from oldFolder: String, to newFolder: String) throws {
+        func moved(_ path: String) -> String? {
+            path == oldFolder || path.hasPrefix(oldFolder + "/") ? newFolder + path.dropFirst(oldFolder.count) : nil
+        }
+        for download in try modelContext.fetch(FetchDescriptor<DownloadRecord>()) {
+            if let folder = moved(download.folder) { download.folder = folder }
+            if let filePath = download.filePath.flatMap(moved) { download.filePath = filePath }
+        }
+        try modelContext.save()
+    }
+
     // MARK: Categories
 
     public func categories() throws -> [CategorySummary] {

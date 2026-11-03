@@ -99,9 +99,10 @@ struct RequestFactory: Sendable {
                 kCFNetworkProxiesHTTPEnable: true,
                 kCFNetworkProxiesHTTPProxy: proxy.host,
                 kCFNetworkProxiesHTTPPort: proxy.port,
-                kCFNetworkProxiesHTTPSEnable: true,
-                kCFNetworkProxiesHTTPSProxy: proxy.host,
-                kCFNetworkProxiesHTTPSPort: proxy.port,
+                // iOS has no constants for these, but understands the same keys.
+                "HTTPSEnable": true,
+                "HTTPSProxy": proxy.host,
+                "HTTPSPort": proxy.port,
             ] as [AnyHashable: Any]
         case .socks5:
             guard let port = NWEndpoint.Port(rawValue: UInt16(clamping: proxy.port)) else { return }

@@ -178,6 +178,7 @@ public final class MisbehavingServer: @unchecked Sendable {
         var headers: [String: String] = [:]
         if behaviour.advertisesRanges { headers["Accept-Ranges"] = "bytes" }
         if let etag = behaviour.etag { headers["ETag"] = etag }
+        if let disposition = behaviour.contentDisposition { headers["Content-Disposition"] = disposition }
         if behaviour.sendsLength || isPartial { headers["Content-Length"] = String(length) }
         if isPartial { headers["Content-Range"] = "bytes \(start)-\(end)/\(size)" }
         await respond(isPartial ? 206 : 200, headers, to: connection)

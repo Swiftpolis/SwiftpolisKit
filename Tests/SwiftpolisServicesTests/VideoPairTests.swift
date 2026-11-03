@@ -121,7 +121,7 @@ private struct PairFixture {
             clock: clock,
             tick: .milliseconds(2),
             shutDown: { recorder.recordShutdown() },
-            makeEngine: { recorder.make($0, $1) },
+            makeEngine: { recorder.make($1, $2) },
             spider: { _, _ in Spider.Findings() },
             mux: { await recorder.mux(video: $0, audio: $1, folder: $2) }
         )
@@ -558,7 +558,7 @@ struct VideoPairListTests {
         let coordinator = DownloadCoordinator(
             library: library,
             secrets: InMemorySecretStore(),
-            makeEngine: { FakeEngine(request: $0, secrets: $1) },
+            makeEngine: { FakeEngine(request: $1, secrets: $2) },
             spider: { request, _ in
                 lookedUp.add(request.link)
                 return Spider.Findings()

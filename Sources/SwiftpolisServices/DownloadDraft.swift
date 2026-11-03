@@ -213,6 +213,16 @@ public enum BrowserRequestRoute: Equatable, Sendable {
     }
 }
 
+public enum QueueNaming {
+    public static func message(for error: Error, name: String) -> String {
+        switch error as? QueueNameError {
+        case .alreadyExists: "\"\(name)\" already exists!"
+        case .empty: "Enter a queue name."
+        case nil: error.localizedDescription
+        }
+    }
+}
+
 public enum LinkText {
     /// The links in a piece of text, one per line as in a text file of links. A single-line field can
     /// turn a list's line breaks into spaces, so a space before another link separates them too.
