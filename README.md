@@ -1,6 +1,6 @@
 # SwiftpolisKit
 
-The engines, storage and rules behind [Swiftpolis](https://github.com/OWNER/Swiftpolis), a native download
+The engines, storage and rules behind [Swiftpolis](https://github.com/Swiftpolis/Swiftpolis), a native download
 manager for macOS. It has no user interface.
 
 | Library | What it holds |
