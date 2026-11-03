@@ -24,13 +24,6 @@ public final class HTTPDownloadEngine: DownloadEngine {
         var probeSession: URLSession?
     }
 
-    private struct Probe {
-        var fileSize: Int64?
-        var etag: String?
-        var supportsRanges = false
-        var contentDisposition: String?
-    }
-
     private enum PreparationError: Error {
         case insufficientSpace
         case cannotCreateFile
@@ -105,7 +98,7 @@ public final class HTTPDownloadEngine: DownloadEngine {
     private func perform() async {
         guard move(to: .creatingDownloadFile) else { return }
 
-        let probe: Probe
+        let probe: HeaderProbe
         do {
             probe = try await fetchHeaders()
         } catch {
@@ -153,30 +146,19 @@ public final class HTTPDownloadEngine: DownloadEngine {
 
     // MARK: Asking the server
 
-    private func fetchHeaders() async throws -> Probe {
-        let delegate = RequestPolicyDelegate(requests: requests)
-        let session = requests.makeSession(delegate: delegate, delegateQueue: nil)
-        defer { session.finishTasksAndInvalidate() }
-        state.withLock { $0.probeSession = session }
+    private func fetchHeaders() async throws -> HeaderProbe {
         defer { state.withLock { $0.probeSession = nil } }
-        if isStopped { throw CancellationError() }
-
-        let (_, response) = try await session.data(for: requests.make(method: "HEAD"))
-        guard let response = response as? HTTPURLResponse, response.statusCode < 400 else {
-            // Some servers refuse HEAD. The GET decides whether the file is really there.
-            return Probe()
+        let probe = try await HeaderProbe.fetch(requests: requests) { session in
+            state.withLock { $0.probeSession = session }
+            if isStopped { session.invalidateAndCancel() }
         }
-        return Probe(
-            fileSize: response.value(forHTTPHeaderField: "Content-Length").flatMap { Int64($0) },
-            etag: response.value(forHTTPHeaderField: "ETag"),
-            supportsRanges: response.value(forHTTPHeaderField: "Accept-Ranges") == "bytes",
-            contentDisposition: response.value(forHTTPHeaderField: "Content-Disposition")
-        )
+        if isStopped { throw CancellationError() }
+        return probe
     }
 
     // MARK: Preparing the files
 
-    private func prepareFiles(_ probe: Probe) throws -> (descriptor: Int32, controlFile: URL) {
+    private func prepareFiles(_ probe: HeaderProbe) throws -> (descriptor: Int32, controlFile: URL) {
         let folder = URL(filePath: request.folder, directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
 

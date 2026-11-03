@@ -172,6 +172,132 @@ struct LibraryRepositoryTests {
         #expect(download.downloadedBytes == 40)
     }
 
+    // MARK: Changing Downloads
+
+    @Test("a start records the attempt's date and status")
+    func recordsStart() async throws {
+        let repository = try await makeRepository()
+        let gid = try await repository.addDownload(request("https://a"), to: "Single Downloads", status: .stopped, at: date)
+        let later = date.addingTimeInterval(60)
+
+        try await repository.recordStart(of: gid, status: .waiting, at: later)
+
+        let download = try #require(try await repository.download(gid))
+        #expect(download.status == .waiting)
+        #expect(download.firstTryDate == date)
+        #expect(download.lastTryDate == later)
+    }
+
+    @Test("a finished file's path is kept")
+    func keepsFilePath() async throws {
+        let repository = try await makeRepository()
+        let gid = try await repository.addDownload(request("https://a"), to: "Single Downloads", status: .waiting, at: date)
+
+        try await repository.saveProgress(
+            DownloadProgress(status: .complete, fileName: "a.bin", totalBytes: 5, downloadedBytes: 5, filePath: "/x/a.bin"),
+            for: gid
+        )
+
+        #expect(try await repository.download(gid)?.filePath == "/x/a.bin")
+    }
+
+    @Test("the Spider's findings fill in the name and size, but never a chosen name")
+    func spiderFindings() async throws {
+        let repository = try await makeRepository()
+        let found = try await repository.addDownload(request("https://a"), to: "Single Downloads", status: .stopped, at: date)
+        var named = request("https://b")
+        named.customFileName = "mine.bin"
+        let chosen = try await repository.addDownload(named, to: "Single Downloads", status: .stopped, at: date)
+
+        try await repository.saveSpiderFindings(fileName: "found.bin", totalBytes: 9, for: found)
+        try await repository.saveSpiderFindings(fileName: "found.bin", totalBytes: 9, for: chosen)
+
+        #expect(try await repository.download(found)?.fileName == "found.bin")
+        #expect(try await repository.download(found)?.totalBytes == 9)
+        #expect(try await repository.download(chosen)?.fileName == "mine.bin")
+    }
+
+    @Test("editing options replaces them")
+    func editOptions() async throws {
+        let repository = try await makeRepository()
+        let gid = try await repository.addDownload(request("https://a"), to: "Single Downloads", status: .stopped, at: date)
+        var edited = request("https://b")
+        edited.connections = 3
+        edited.proxy = ProxySettings(kind: .http, host: "h", port: 8)
+
+        try await repository.updateRequest(edited, for: gid)
+
+        #expect(try await repository.download(gid)?.request == edited)
+    }
+
+    @Test("removing takes a Download off every list")
+    func removeDownload() async throws {
+        let repository = try await makeRepository()
+        let gone = try await repository.addDownload(request("https://a"), to: "Single Downloads", status: .stopped, at: date)
+        let kept = try await repository.addDownload(request("https://b"), to: "Single Downloads", status: .stopped, at: date)
+
+        try await repository.removeDownloads([gone])
+
+        #expect(try await repository.downloads(in: "Single Downloads").map(\.gid) == [kept])
+        #expect(try await repository.downloads(in: "All Downloads").map(\.gid) == [kept])
+        #expect(try await repository.containsLink("https://a") == false)
+    }
+
+    @Test("clearing the list removes every Download and user Queue, but no built-in")
+    func clearList() async throws {
+        let repository = try await makeRepository()
+        try await repository.createQueue(named: "Movies")
+        _ = try await repository.addDownload(request("https://a"), to: "Movies", status: .stopped, at: date)
+        _ = try await repository.addDownload(request("https://b"), to: "Scheduled Downloads", status: .stopped, at: date)
+
+        try await repository.clearList()
+
+        #expect(try await repository.categories().map(\.name) == CategoryKind.builtInNames)
+        #expect(try await repository.downloads(in: "All Downloads").isEmpty)
+    }
+
+    @Test("moving to another Category puts it last there, and clears its schedule")
+    func moveCategory() async throws {
+        let repository = try await makeRepository()
+        try await repository.createQueue(named: "Movies")
+        var scheduled = request("https://a")
+        scheduled.startTime = ClockTime(hour: 1, minute: 0)
+        scheduled.endTime = ClockTime(hour: 2, minute: 0)
+        scheduled.shutsDownAfterDownload = true
+        let gid = try await repository.addDownload(scheduled, to: "Single Downloads", status: .stopped, at: date)
+        let existing = try await repository.addDownload(request("https://b"), to: "Movies", status: .stopped, at: date)
+
+        try await repository.moveDownload(gid, to: "Movies")
+
+        let moved = try #require(try await repository.download(gid))
+        #expect(moved.category == "Movies")
+        #expect(moved.request.startTime == nil)
+        #expect(moved.request.endTime == nil)
+        #expect(!moved.request.shutsDownAfterDownload)
+        #expect(try await repository.downloads(in: "Movies").map(\.gid) == [gid, existing])
+        #expect(try await repository.downloads(in: "Single Downloads").isEmpty)
+    }
+
+    @Test("sorting saves the order for that list only, as in Persepolis")
+    func sorting() async throws {
+        let repository = try await makeRepository()
+        var names: [String: GID] = [:]
+        for name in ["b", "c", "a"] {
+            var named = request("https://\(name)")
+            named.customFileName = name
+            names[name] = try await repository.addDownload(named, to: "Single Downloads", status: .stopped, at: date)
+        }
+        let allBefore = try await repository.downloads(in: "All Downloads").map(\.gid)
+
+        try await repository.sort("Single Downloads", by: .name)
+
+        #expect(try await repository.downloads(in: "Single Downloads").map(\.fileName) == ["a", "b", "c"])
+        #expect(try await repository.downloads(in: "All Downloads").map(\.gid) == allBefore)
+
+        try await repository.sort("All Downloads", by: .name)
+        #expect(try await repository.downloads(in: "All Downloads").map(\.fileName) == ["a", "b", "c"])
+    }
+
     // MARK: Store
 
     @Test("a library on disk is still there, in order, after reopening")

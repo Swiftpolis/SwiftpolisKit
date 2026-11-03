@@ -137,13 +137,131 @@ public actor LibraryRepository {
     }
 
     public func saveProgress(_ progress: DownloadProgress, for gid: GID) throws {
-        guard let record = try fetchDownload(gid) else {
-            throw LibraryError.downloadNotFound(gid)
-        }
+        let record = try requireDownload(gid)
         record.statusRawValue = progress.status.rawValue
-        record.fileName = progress.fileName
-        record.totalBytes = progress.totalBytes
+        if let fileName = progress.fileName { record.fileName = fileName }
+        if let totalBytes = progress.totalBytes { record.totalBytes = totalBytes }
         record.downloadedBytes = progress.downloadedBytes
+        if let filePath = progress.filePath { record.filePath = filePath }
+        try modelContext.save()
+    }
+
+    /// Records that a finished file has moved.
+    public func updateFilePath(_ path: String, for gid: GID) throws {
+        try requireDownload(gid).filePath = path
+        try modelContext.save()
+    }
+
+    /// Clears a finished Download's schedule, as Persepolis does when one ends.
+    public func clearSchedule(of gid: GID) throws {
+        let record = try requireDownload(gid)
+        record.startTimeMinutes = nil
+        record.endTimeMinutes = nil
+        record.shutsDownAfterDownload = false
+        try modelContext.save()
+    }
+
+    public func recordStart(of gid: GID, status: DownloadStatus, at date: Date) throws {
+        let record = try requireDownload(gid)
+        record.statusRawValue = status.rawValue
+        record.lastTryDate = date
+        try modelContext.save()
+    }
+
+    /// Fills in what the Spider learned. A name the user chose always stays.
+    public func saveSpiderFindings(fileName: String?, totalBytes: Int64?, for gid: GID) throws {
+        let record = try requireDownload(gid)
+        if record.customFileName == nil, let fileName { record.fileName = fileName }
+        if let totalBytes { record.totalBytes = totalBytes }
+        try modelContext.save()
+    }
+
+    public func updateRequest(_ request: DownloadRequest, for gid: GID) throws {
+        let record = try requireDownload(gid)
+        record.link = request.link
+        record.customFileName = request.customFileName
+        if let name = request.customFileName { record.fileName = name }
+        record.folder = request.folder
+        record.connections = request.connections
+        record.speedDial = request.speedDial
+        record.startTimeMinutes = request.startTime?.minutesSinceMidnight
+        record.endTimeMinutes = request.endTime?.minutesSinceMidnight
+        record.proxyKindRawValue = request.proxy?.kind.rawValue
+        record.proxyHost = request.proxy?.host
+        record.proxyPort = request.proxy?.port
+        record.proxyUser = request.proxy?.user
+        record.httpUser = request.httpUser
+        record.referer = request.referer
+        record.userAgent = request.userAgent
+        record.headers = request.headers
+        record.cookieFilePath = request.cookieFilePath
+        record.shutsDownAfterDownload = request.shutsDownAfterDownload
+        try modelContext.save()
+    }
+
+    public func removeDownloads(_ gids: [GID]) throws {
+        for gid in gids {
+            if let record = try fetchDownload(gid) { modelContext.delete(record) }
+        }
+        try modelContext.save()
+    }
+
+    /// Empties the list. As in Persepolis, this also removes user-created Queues.
+    public func clearList() throws {
+        for download in try modelContext.fetch(FetchDescriptor<DownloadRecord>()) {
+            modelContext.delete(download)
+        }
+        for category in try fetchCategories() where CategoryKind.canRemove(categoryNamed: category.name) {
+            modelContext.delete(category)
+        }
+        try modelContext.save()
+    }
+
+    /// Moves a stopped Download to the end of another Category. Its schedule doesn't go with it.
+    public func moveDownload(_ gid: GID, to categoryName: String) throws {
+        guard CategoryKind(categoryName: categoryName) != .allDownloads else {
+            throw LibraryError.categoryNotAddable(categoryName)
+        }
+        let record = try requireDownload(gid)
+        let status = DownloadStatus(rawValue: record.statusRawValue) ?? .stopped
+        guard status.canChangeCategory else { throw LibraryError.downloadIsActive(gid) }
+
+        let category = try fetchCategory(named: categoryName)
+        guard record.category?.name != categoryName else { return }
+        record.categoryPosition = (category.downloads.map(\.categoryPosition).max() ?? -1) + 1
+        record.category = category
+        record.startTimeMinutes = nil
+        record.endTimeMinutes = nil
+        record.shutsDownAfterDownload = false
+        try modelContext.save()
+    }
+
+    /// Sorts a list and saves the order, so that a Queue also runs in this order.
+    public func sort(_ categoryName: String, by key: DownloadSortKey) throws {
+        let isAllDownloads = CategoryKind(categoryName: categoryName) == .allDownloads
+        let records = isAllDownloads
+            ? try modelContext.fetch(FetchDescriptor<DownloadRecord>())
+                .sorted { $0.allDownloadsPosition > $1.allDownloadsPosition }
+            : try fetchCategory(named: categoryName).downloads
+                .sorted { $0.categoryPosition > $1.categoryPosition }
+
+        let sorted = key.sorted(records) { record in
+            DownloadSortFields(
+                fileName: record.fileName,
+                status: DownloadStatus(rawValue: record.statusRawValue) ?? .stopped,
+                totalBytes: record.totalBytes,
+                firstTry: record.firstTryDate,
+                lastTry: record.lastTryDate
+            )
+        }
+        for (index, record) in sorted.enumerated() {
+            let position = sorted.count - index
+            if isAllDownloads {
+                record.allDownloadsPosition = position
+            } else {
+                record.categoryPosition = position
+            }
+        }
         try modelContext.save()
     }
 
@@ -162,6 +280,11 @@ public actor LibraryRepository {
             throw LibraryError.categoryNotFound(name)
         }
         return category
+    }
+
+    private func requireDownload(_ gid: GID) throws -> DownloadRecord {
+        guard let record = try fetchDownload(gid) else { throw LibraryError.downloadNotFound(gid) }
+        return record
     }
 
     private func fetchDownload(_ gid: GID) throws -> DownloadRecord? {
@@ -217,6 +340,7 @@ public actor LibraryRepository {
             status: DownloadStatus(rawValue: record.statusRawValue) ?? .stopped,
             category: record.category?.name ?? "",
             fileName: record.fileName,
+            filePath: record.filePath,
             totalBytes: record.totalBytes,
             downloadedBytes: record.downloadedBytes,
             firstTryDate: record.firstTryDate,

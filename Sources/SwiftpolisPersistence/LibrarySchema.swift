@@ -37,6 +37,7 @@ enum LibrarySchemaV1: VersionedSchema {
 
         var statusRawValue: String
         var fileName: String?
+        var filePath: String?
         var totalBytes: Int64?
         var downloadedBytes: Int64 = 0
         var firstTryDate: Date

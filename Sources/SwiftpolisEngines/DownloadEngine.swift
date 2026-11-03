@@ -48,6 +48,28 @@ public struct DownloadSnapshot: Hashable, Sendable {
     public var secondsRemaining: Double?
     public var errorMessage: String?
 
+    public init(
+        status: DownloadStatus,
+        fileName: String?,
+        filePath: String?,
+        totalBytes: Int64?,
+        downloadedBytes: Int64,
+        activeConnections: Int,
+        bytesPerSecond: Double,
+        secondsRemaining: Double?,
+        errorMessage: String?
+    ) {
+        self.status = status
+        self.fileName = fileName
+        self.filePath = filePath
+        self.totalBytes = totalBytes
+        self.downloadedBytes = downloadedBytes
+        self.activeConnections = activeConnections
+        self.bytesPerSecond = bytesPerSecond
+        self.secondsRemaining = secondsRemaining
+        self.errorMessage = errorMessage
+    }
+
     public var percent: Int {
         if status == .complete { return 100 }
         guard let totalBytes, totalBytes > 0 else { return 0 }

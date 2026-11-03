@@ -103,6 +103,8 @@ public struct DownloadSummary: Hashable, Sendable {
     public let status: DownloadStatus
     public let category: String
     public let fileName: String?
+    /// Where a finished file ended up. Before that, it's `nil`.
+    public let filePath: String?
     public let totalBytes: Int64?
     public let downloadedBytes: Int64
     public let firstTryDate: Date
@@ -114,6 +116,7 @@ public struct DownloadSummary: Hashable, Sendable {
         status: DownloadStatus,
         category: String,
         fileName: String?,
+        filePath: String?,
         totalBytes: Int64?,
         downloadedBytes: Int64,
         firstTryDate: Date,
@@ -124,6 +127,7 @@ public struct DownloadSummary: Hashable, Sendable {
         self.status = status
         self.category = category
         self.fileName = fileName
+        self.filePath = filePath
         self.totalBytes = totalBytes
         self.downloadedBytes = downloadedBytes
         self.firstTryDate = firstTryDate
@@ -137,12 +141,20 @@ public struct DownloadProgress: Hashable, Sendable {
     public var fileName: String?
     public var totalBytes: Int64?
     public var downloadedBytes: Int64
+    public var filePath: String?
 
-    public init(status: DownloadStatus, fileName: String?, totalBytes: Int64?, downloadedBytes: Int64) {
+    public init(
+        status: DownloadStatus,
+        fileName: String?,
+        totalBytes: Int64?,
+        downloadedBytes: Int64,
+        filePath: String? = nil
+    ) {
         self.status = status
         self.fileName = fileName
         self.totalBytes = totalBytes
         self.downloadedBytes = downloadedBytes
+        self.filePath = filePath
     }
 }
 
@@ -151,4 +163,5 @@ public enum LibraryError: Error, Equatable, Sendable {
     case categoryCannotBeRemoved(String)
     case categoryNotAddable(String)
     case downloadNotFound(GID)
+    case downloadIsActive(GID)
 }
