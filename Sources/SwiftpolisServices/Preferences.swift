@@ -24,6 +24,7 @@ public struct Preferences: Equatable, Sendable {
     public var keepsSystemAwake = false
     public var startsBrowserRequestsImmediately = false
     public var checksClipboard = false
+    public var videoFinderMaxLinks = 3
 
     public init() {}
 
@@ -74,6 +75,7 @@ public final class PreferencesStore: @unchecked Sendable {
             read(&value.keepsSystemAwake, "keepsSystemAwake")
             read(&value.startsBrowserRequestsImmediately, "startsBrowserRequestsImmediately")
             read(&value.checksClipboard, "checksClipboard")
+            read(&value.videoFinderMaxLinks, "videoFinderMaxLinks")
             return value
         }
         set {
@@ -96,7 +98,14 @@ public final class PreferencesStore: @unchecked Sendable {
             defaults.set(newValue.keepsSystemAwake, forKey: "keepsSystemAwake")
             defaults.set(newValue.startsBrowserRequestsImmediately, forKey: "startsBrowserRequestsImmediately")
             defaults.set(newValue.checksClipboard, forKey: "checksClipboard")
+            defaults.set(newValue.videoFinderMaxLinks, forKey: "videoFinderMaxLinks")
         }
+    }
+
+    /// When yt-dlp last looked for an update. This is the app's own note, not a setting.
+    public var lastYtDlpUpdateCheck: Date? {
+        get { defaults.object(forKey: "lastYtDlpUpdateCheck") as? Date }
+        set { defaults.set(newValue, forKey: "lastYtDlpUpdateCheck") }
     }
 
     private func read<Value>(_ value: inout Value, _ key: String) {

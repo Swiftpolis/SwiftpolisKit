@@ -28,6 +28,11 @@ public actor LibraryRepository {
             download.endTimeMinutes = nil
             download.shutsDownAfterDownload = false
         }
+        // Nothing is muxing yet, so one that was has been cut off and needs another go.
+        for pair in try modelContext.fetch(FetchDescriptor<VideoPairRecord>())
+        where pair.muxingStatusRawValue == MuxingStatus.muxing.rawValue {
+            pair.muxingStatusRawValue = MuxingStatus.error.rawValue
+        }
         try modelContext.save()
     }
 
@@ -49,7 +54,9 @@ public actor LibraryRepository {
         guard CategoryKind.canRemove(categoryNamed: name) else {
             throw LibraryError.categoryCannotBeRemoved(name)
         }
-        modelContext.delete(try fetchCategory(named: name))
+        let category = try fetchCategory(named: name)
+        try deletePairs(containing: Set(category.downloads.map(\.gid)))
+        modelContext.delete(category)
         try modelContext.save()
     }
 
@@ -106,7 +113,8 @@ public actor LibraryRepository {
             userAgent: request.userAgent,
             headers: request.headers,
             cookieFilePath: request.cookieFilePath,
-            shutsDownAfterDownload: request.shutsDownAfterDownload
+            shutsDownAfterDownload: request.shutsDownAfterDownload,
+            engineKindRawValue: request.engine.rawValue
         )
         modelContext.insert(record)
         record.category = category
@@ -196,6 +204,7 @@ public actor LibraryRepository {
         record.headers = request.headers
         record.cookieFilePath = request.cookieFilePath
         record.shutsDownAfterDownload = request.shutsDownAfterDownload
+        record.engineKindRawValue = request.engine.rawValue
         try modelContext.save()
     }
 
@@ -203,6 +212,7 @@ public actor LibraryRepository {
         for gid in gids {
             if let record = try fetchDownload(gid) { modelContext.delete(record) }
         }
+        try deletePairs(containing: Set(gids.map(\.rawValue)))
         try modelContext.save()
     }
 
@@ -210,6 +220,9 @@ public actor LibraryRepository {
     public func clearList() throws {
         for download in try modelContext.fetch(FetchDescriptor<DownloadRecord>()) {
             modelContext.delete(download)
+        }
+        for pair in try modelContext.fetch(FetchDescriptor<VideoPairRecord>()) {
+            modelContext.delete(pair)
         }
         for category in try fetchCategories() where CategoryKind.canRemove(categoryNamed: category.name) {
             modelContext.delete(category)
@@ -287,6 +300,75 @@ public actor LibraryRepository {
         try modelContext.save()
     }
 
+    // MARK: Video pairs
+
+    /// Adds both streams, the video first. Only the video can start right away, so the audio stream
+    /// always begins stopped.
+    public func addVideoPair(
+        video: DownloadRequest,
+        audio: DownloadRequest,
+        to categoryName: String,
+        videoStatus: DownloadStatus,
+        at date: Date
+    ) throws -> VideoPair {
+        let videoGID = try addDownload(video, to: categoryName, status: videoStatus, at: date)
+        let audioGID = try addDownload(audio, to: categoryName, status: .stopped, at: date)
+        modelContext.insert(VideoPairRecord(videoGID: videoGID.rawValue, audioGID: audioGID.rawValue))
+        try modelContext.save()
+        return VideoPair(videoGID: videoGID, audioGID: audioGID, muxingStatus: .notStarted)
+    }
+
+    public func videoPairs() throws -> [VideoPair] {
+        try modelContext.fetch(FetchDescriptor<VideoPairRecord>()).compactMap(pair(from:))
+    }
+
+    public func videoPair(containing gid: GID) throws -> VideoPair? {
+        try fetchPair(containing: gid.rawValue).flatMap(pair(from:))
+    }
+
+    public func setMuxingStatus(_ status: MuxingStatus, for pair: VideoPair) throws {
+        try fetchPair(containing: pair.videoGID.rawValue)?.muxingStatusRawValue = status.rawValue
+        try modelContext.save()
+    }
+
+    /// Muxing worked, so the audio stream's row goes, and the video's becomes the finished file.
+    public func finishVideoPair(_ pair: VideoPair, fileName: String, filePath: String, bytes: Int64) throws {
+        let video = try requireDownload(pair.videoGID)
+        video.statusRawValue = DownloadStatus.complete.rawValue
+        video.fileName = fileName
+        video.customFileName = fileName
+        video.filePath = filePath
+        video.totalBytes = bytes
+        video.downloadedBytes = bytes
+        try removeDownloads([pair.audioGID])
+        if let record = try fetchPair(containing: pair.videoGID.rawValue) { modelContext.delete(record) }
+        try modelContext.save()
+    }
+
+    private func fetchPair(containing gid: String) throws -> VideoPairRecord? {
+        var descriptor = FetchDescriptor<VideoPairRecord>(
+            predicate: #Predicate { $0.videoGID == gid || $0.audioGID == gid }
+        )
+        descriptor.fetchLimit = 1
+        return try modelContext.fetch(descriptor).first
+    }
+
+    private func deletePairs(containing gids: Set<String>) throws {
+        for pair in try modelContext.fetch(FetchDescriptor<VideoPairRecord>())
+        where gids.contains(pair.videoGID) || gids.contains(pair.audioGID) {
+            modelContext.delete(pair)
+        }
+    }
+
+    private func pair(from record: VideoPairRecord) -> VideoPair? {
+        guard let video = GID(rawValue: record.videoGID), let audio = GID(rawValue: record.audioGID) else { return nil }
+        return VideoPair(
+            videoGID: video,
+            audioGID: audio,
+            muxingStatus: MuxingStatus(rawValue: record.muxingStatusRawValue) ?? .notStarted
+        )
+    }
+
     // MARK: Fetching
 
     private func fetchCategories() throws -> [CategoryRecord] {
@@ -354,7 +436,8 @@ public actor LibraryRepository {
             userAgent: record.userAgent,
             headers: record.headers,
             cookieFilePath: record.cookieFilePath,
-            shutsDownAfterDownload: record.shutsDownAfterDownload
+            shutsDownAfterDownload: record.shutsDownAfterDownload,
+            engine: DownloadEngineKind(rawValue: record.engineKindRawValue) ?? .http
         )
         return DownloadSummary(
             gid: GID(rawValue: record.gid)!,

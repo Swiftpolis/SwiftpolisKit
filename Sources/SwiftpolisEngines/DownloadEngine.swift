@@ -50,6 +50,8 @@ public struct DownloadSnapshot: Hashable, Sendable {
     public var bytesPerSecond: Double
     public var secondsRemaining: Double?
     public var errorMessage: String?
+    /// `index/count`. yt-dlp has these in place of Connections.
+    public var fragments: String?
 
     public init(
         status: DownloadStatus,
@@ -60,7 +62,8 @@ public struct DownloadSnapshot: Hashable, Sendable {
         activeConnections: Int,
         bytesPerSecond: Double,
         secondsRemaining: Double?,
-        errorMessage: String?
+        errorMessage: String?,
+        fragments: String? = nil
     ) {
         self.status = status
         self.fileName = fileName
@@ -71,6 +74,7 @@ public struct DownloadSnapshot: Hashable, Sendable {
         self.bytesPerSecond = bytesPerSecond
         self.secondsRemaining = secondsRemaining
         self.errorMessage = errorMessage
+        self.fragments = fragments
     }
 
     public var percent: Int {

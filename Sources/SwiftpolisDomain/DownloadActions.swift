@@ -13,9 +13,11 @@ public struct DownloadActions: Equatable, Sendable {
 
     public init() {}
 
-    public init(status: DownloadStatus, category: String) {
+    public init(status: DownloadStatus, category: String, engine: DownloadEngineKind = .http) {
         if CategoryKind(categoryName: category) == .singleDownloads {
             applySingleDownload(status: status)
+            // yt-dlp can only be stopped and started again.
+            if engine == .ytDlp { canPause = false }
         } else {
             // A Queue's Downloads are controlled through the Queue, and pressing these says so.
             canResume = true

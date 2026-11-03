@@ -16,6 +16,7 @@ public struct DownloadRequest: Hashable, Sendable {
     public var headers: String?
     public var cookieFilePath: String?
     public var shutsDownAfterDownload: Bool
+    public var engine: DownloadEngineKind
 
     public init(
         link: String,
@@ -31,7 +32,8 @@ public struct DownloadRequest: Hashable, Sendable {
         userAgent: String? = nil,
         headers: String? = nil,
         cookieFilePath: String? = nil,
-        shutsDownAfterDownload: Bool = false
+        shutsDownAfterDownload: Bool = false,
+        engine: DownloadEngineKind = .http
     ) {
         self.link = link
         self.customFileName = customFileName
@@ -47,6 +49,7 @@ public struct DownloadRequest: Hashable, Sendable {
         self.headers = headers
         self.cookieFilePath = cookieFilePath
         self.shutsDownAfterDownload = shutsDownAfterDownload
+        self.engine = engine
     }
 }
 

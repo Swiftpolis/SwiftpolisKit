@@ -329,28 +329,11 @@ public final class HTTPDownloadEngine: DownloadEngine {
         }
     }
 
-    /// Moves a finished file into its subfolder if it's in the default folder. If the move fails,
-    /// the file stays where it is, as in Persepolis.
     private func moveToSubfolder() -> (name: String?, path: String?) {
         let (name, path) = state.withLock { ($0.fileName, $0.filePath) }
-        guard settings.usesSubfolders, settings.defaultFolder == request.folder,
-              let name, let path
-        else { return (name, path) }
-
-        let folder = URL(filePath: request.folder, directoryHint: .isDirectory)
-            .appending(path: FileClassifier.subfolder(for: name), directoryHint: .isDirectory)
-        let manager = FileManager.default
-        let newName = FileNaming.unique(name) { candidate in
-            manager.fileExists(atPath: folder.appending(path: candidate).path)
-        }
-        let destination = folder.appending(path: newName, directoryHint: .notDirectory)
-        do {
-            try manager.createDirectory(at: folder, withIntermediateDirectories: true)
-            try manager.moveItem(atPath: path, toPath: destination.path)
-            return (newName, destination.path)
-        } catch {
-            return (name, path)
-        }
+        guard let name, let path else { return (name, path) }
+        let moved = FinishedFile.moveToSubfolder(name: name, path: path, request: request, settings: settings)
+        return (moved.name, moved.path)
     }
 }
 

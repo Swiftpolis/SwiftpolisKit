@@ -15,6 +15,21 @@ public enum DownloadEvent: Sendable {
     case queueFinished(name: String, outcome: QueueOutcome)
     /// A requested After-download shutdown has begun, and the Mac will shut down shortly.
     case shuttingDown
+    /// The Video pairs running now, known by their video stream.
+    case videoPairsChanged(Set<GID>)
+    case videoPairFinished(VideoPairResult)
+}
+
+public struct VideoPairResult: Equatable, Sendable {
+    public enum Outcome: Equatable, Sendable {
+        case complete(fileName: String, filePath: String)
+        case notEnoughSpace(folder: String)
+        case muxingFailed(message: String)
+    }
+
+    public let videoGID: GID
+    public let category: String
+    public let outcome: Outcome
 }
 
 public enum QueueOutcome: Equatable, Sendable {
@@ -34,6 +49,8 @@ public struct FinishedDownload: Equatable, Sendable {
     public let filePath: String?
     public let totalBytes: Int64?
     public let errorMessage: String?
+    /// A stream on its own isn't worth announcing. Its pair says when the file is ready.
+    public let isVideoPairStream: Bool
 }
 
 /// Why a control action on one Download was refused.
@@ -45,6 +62,8 @@ public enum DownloadControlError: Error, Equatable, Sendable {
     case downloadsActive
     case downloadNotFound
     case queueRunning(String)
+    /// Both streams and their Muxing count as one job, and it's already running.
+    case pairInProgress
 }
 
 /// Why one Download in a batch wasn't removed or moved as asked.
@@ -54,6 +73,7 @@ public enum DownloadRefusal: Equatable, Sendable {
     case notComplete(fileName: String)
     case moveFailed(fileName: String)
     case queueRunning(String)
+    case pairInProgress
 }
 
 /// Runs Downloads: starts their engines, reports progress, and applies Persepolis's rules about
@@ -61,6 +81,8 @@ public enum DownloadRefusal: Equatable, Sendable {
 public actor DownloadCoordinator {
     public typealias EngineFactory = @Sendable (DownloadRequest, DownloadSecrets) -> any DownloadEngine
     public typealias SpiderFunction = @Sendable (DownloadRequest, DownloadSecrets) async -> Spider.Findings
+    /// Combines a video file and an audio file, given the folder the Download was added with.
+    public typealias MuxFunction = @Sendable (String, String, String) async -> Result<VideoMuxer.Output, VideoMuxer.Failure>
 
     private struct Session {
         let engine: any DownloadEngine
@@ -76,6 +98,12 @@ public actor DownloadCoordinator {
         var currentDownload: GID?
     }
 
+    /// A Video pair at work, from its first stream to the end of Muxing.
+    private struct PairRun {
+        let pair: VideoPair
+        var isStopRequested = false
+    }
+
     public nonisolated let events: AsyncStream<DownloadEvent>
     private let eventContinuation: AsyncStream<DownloadEvent>.Continuation
 
@@ -88,10 +116,12 @@ public actor DownloadCoordinator {
     private let shutDown: @Sendable () async -> Void
     private let makeEngine: EngineFactory
     private let spider: SpiderFunction
+    private let mux: MuxFunction
 
     private var sessions: [GID: Session] = [:]
     private var isTicking = false
     private var queues: [String: QueueRun] = [:]
+    private var pairRuns: [GID: PairRun] = [:]
     private var downloadsShuttingDownAfterwards: Set<GID> = []
     private var isShuttingDown = false
 
@@ -114,7 +144,8 @@ public actor DownloadCoordinator {
         queueWait: @escaping @Sendable () -> QueueWait = { QueueWait(hours: 0, minutes: 0) },
         shutDown: @escaping @Sendable () async -> Void = {},
         makeEngine: @escaping EngineFactory,
-        spider: @escaping SpiderFunction
+        spider: @escaping SpiderFunction,
+        mux: @escaping MuxFunction = { _, _, _ in .failure(.failed(message: "muxing error")) }
     ) {
         self.library = library
         self.secrets = secrets
@@ -125,10 +156,11 @@ public actor DownloadCoordinator {
         self.shutDown = shutDown
         self.makeEngine = makeEngine
         self.spider = spider
+        self.mux = mux
         (events, eventContinuation) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(64))
     }
 
-    public var hasActiveDownloads: Bool { !sessions.isEmpty || !queues.isEmpty }
+    public var hasActiveDownloads: Bool { !sessions.isEmpty || !queues.isEmpty || !pairRuns.isEmpty }
 
     // MARK: Adding
 
@@ -162,6 +194,9 @@ public actor DownloadCoordinator {
     }
 
     private func lookUp(_ gid: GID, request: DownloadRequest, secrets downloadSecrets: DownloadSecrets) {
+        // A playlist's own size and name say nothing about the video it leads to.
+        let fileExtension = URL(string: request.link)?.pathExtension.lowercased()
+        guard request.engine == .http || (fileExtension != "m3u8" && fileExtension != "mpd") else { return }
         Task { [spider, library, eventContinuation] in
             let findings = await spider(request, downloadSecrets)
             try? await library.saveSpiderFindings(
@@ -173,10 +208,43 @@ public actor DownloadCoordinator {
         }
     }
 
+    /// Adds a video stream and an audio stream that will become one file.
+    @discardableResult
+    public func addVideoPair(
+        video: DownloadRequest,
+        audio: DownloadRequest,
+        secrets downloadSecrets: DownloadSecrets,
+        to category: String,
+        startNow: Bool
+    ) async throws -> VideoPair {
+        let starts = startNow && CategoryKind(categoryName: category) == .singleDownloads
+        let pair = try await library.addVideoPair(
+            video: video,
+            audio: audio,
+            to: category,
+            videoStatus: starts ? .waiting : .stopped,
+            at: clock.now
+        )
+        secrets.save(downloadSecrets, for: pair.videoGID)
+        secrets.save(downloadSecrets, for: pair.audioGID)
+        eventContinuation.yield(.listChanged)
+
+        if !starts || video.startTime != nil {
+            lookUp(pair.videoGID, request: video, secrets: downloadSecrets)
+            lookUp(pair.audioGID, request: audio, secrets: downloadSecrets)
+        }
+        if starts { try startPair(pair) }
+        return pair
+    }
+
     // MARK: Control
 
     public func resume(_ gid: GID) async throws {
         let download = try await requireControllable(gid)
+        if let pair = try await library.videoPair(containing: gid) {
+            try startPair(pair)
+            return
+        }
         if let session = sessions[gid] {
             guard session.engine.snapshot.status == .paused else { throw DownloadControlError.stillClosing }
             session.engine.unpause()
@@ -194,6 +262,11 @@ public actor DownloadCoordinator {
         _ = try await requireControllable(gid)
         downloadsShuttingDownAfterwards.remove(gid)
         sessions[gid]?.engine.stop()
+        if let pair = try await library.videoPair(containing: gid) {
+            downloadsShuttingDownAfterwards.remove(pair.partner(of: gid))
+            pairRuns[pair.videoGID]?.isStopRequested = true
+            sessions[pair.partner(of: gid)]?.engine.stop()
+        }
     }
 
     /// Stops every Queue and Download. Someone who stops everything doesn't also want a shutdown.
@@ -204,6 +277,7 @@ public actor DownloadCoordinator {
 
     private func stopEverything() {
         for name in queues.keys { queues[name]?.isStopRequested = true }
+        for gid in pairRuns.keys { pairRuns[gid]?.isStopRequested = true }
         for session in sessions.values { session.engine.stop() }
     }
 
@@ -270,12 +344,14 @@ public actor DownloadCoordinator {
 
         var category = ""
         var link = ""
+        var isPairStream = false
         do {
             try await library.saveProgress(Self.progress(from: snapshot), for: gid)
             try await library.clearSchedule(of: gid)
             let download = try await library.download(gid)
             category = download?.category ?? ""
             link = download?.request.link ?? ""
+            isPairStream = try await library.videoPair(containing: gid) != nil
         } catch {
             Self.logger.error("Couldn't save a finished download: \(error.localizedDescription)")
         }
@@ -297,13 +373,15 @@ public actor DownloadCoordinator {
             fileName: snapshot.fileName,
             filePath: snapshot.filePath,
             totalBytes: snapshot.totalBytes,
-            errorMessage: snapshot.errorMessage
+            errorMessage: snapshot.errorMessage,
+            isVideoPairStream: isPairStream
         )))
         eventContinuation.yield(.listChanged)
         publishProgress()
         onEnd?(snapshot)
 
-        if downloadsShuttingDownAfterwards.remove(gid) != nil {
+        // A pair's shutdown waits for its Muxing, and the pair asks for it at the end.
+        if !isPairStream, downloadsShuttingDownAfterwards.remove(gid) != nil {
             beginShutdown()
         }
     }
@@ -353,6 +431,131 @@ public actor DownloadCoordinator {
         )
     }
 
+    // MARK: Video pairs
+
+    private func startPair(_ pair: VideoPair) throws {
+        guard pairRuns[pair.videoGID] == nil else { throw DownloadControlError.pairInProgress }
+        pairRuns[pair.videoGID] = PairRun(pair: pair)
+        publishPairs()
+        Task { await runPair(pair) }
+    }
+
+    private func publishPairs() {
+        eventContinuation.yield(.videoPairsChanged(Set(pairRuns.keys)))
+    }
+
+    /// See docs/video-and-torrent.md. Video, then audio, then Muxing, skipping whatever is done.
+    private func runPair(_ pair: VideoPair) async {
+        var isReadyToMux = true
+        for gid in [pair.videoGID, pair.audioGID] {
+            guard let download = try? await library.download(gid), download.status != .complete else { continue }
+            guard pairRuns[pair.videoGID]?.isStopRequested != true else {
+                isReadyToMux = false
+                break
+            }
+
+            var request = download.request
+            // The first stream to run is what waits for the time, so the audio has nothing to wait for.
+            if gid == pair.audioGID { request.startTime = nil }
+            var window: ScheduleWindow?
+            if request.startTime != nil || request.endTime != nil {
+                window = ScheduleWindow(start: request.startTime, end: request.endTime, now: clock.now, calendar: calendar)
+            }
+
+            let snapshot = await runToEnd(gid, request: request, window: window, speedDial: nil)
+            guard snapshot?.status == .complete else {
+                isReadyToMux = false
+                break
+            }
+        }
+
+        if isReadyToMux { await muxPair(pair) }
+        endPairRun(pair)
+    }
+
+    private func endPairRun(_ pair: VideoPair) {
+        pairRuns[pair.videoGID] = nil
+        publishPairs()
+        let videoAsked = downloadsShuttingDownAfterwards.remove(pair.videoGID) != nil
+        let audioAsked = downloadsShuttingDownAfterwards.remove(pair.audioGID) != nil
+        if videoAsked || audioAsked { beginShutdown() }
+    }
+
+    /// Runs Muxing again for a pair whose streams are both finished.
+    public func muxAgain(_ gid: GID) async throws {
+        guard let pair = try await library.videoPair(containing: gid),
+              let download = try await library.download(gid)
+        else { throw DownloadControlError.downloadNotFound }
+        if queues[download.category] != nil { throw DownloadControlError.queueRunning(download.category) }
+        guard pairRuns[pair.videoGID] == nil else { throw DownloadControlError.pairInProgress }
+
+        pairRuns[pair.videoGID] = PairRun(pair: pair)
+        publishPairs()
+        Task {
+            await muxPair(pair)
+            endPairRun(pair)
+        }
+    }
+
+    private func muxPair(_ pair: VideoPair) async {
+        guard let video = try? await library.download(pair.videoGID),
+              let audio = try? await library.download(pair.audioGID),
+              let videoPath = video.filePath,
+              let audioPath = audio.filePath
+        else { return }
+
+        do {
+            try await library.setMuxingStatus(.muxing, for: pair)
+        } catch {
+            Self.logger.error("Couldn't save the muxing status: \(error.localizedDescription)")
+        }
+        eventContinuation.yield(.listChanged)
+
+        let outcome: VideoPairResult.Outcome
+        switch await mux(videoPath, audioPath, video.request.folder) {
+        case .success(let output):
+            outcome = .complete(fileName: output.fileName, filePath: output.path)
+            try? FileManager.default.removeItem(atPath: videoPath)
+            try? FileManager.default.removeItem(atPath: audioPath)
+            secrets.remove(for: pair.audioGID)
+            do {
+                try await library.finishVideoPair(
+                    pair,
+                    fileName: output.fileName,
+                    filePath: output.path,
+                    bytes: output.bytes
+                )
+            } catch {
+                Self.logger.error("Couldn't save a muxed file: \(error.localizedDescription)")
+            }
+        case .failure(let failure):
+            switch failure {
+            case .notEnoughSpace(let folder): outcome = .notEnoughSpace(folder: folder)
+            case .failed(let message): outcome = .muxingFailed(message: message)
+            }
+            try? await library.setMuxingStatus(.error, for: pair)
+        }
+
+        eventContinuation.yield(.videoPairFinished(VideoPairResult(
+            videoGID: pair.videoGID,
+            category: video.category,
+            outcome: outcome
+        )))
+        eventContinuation.yield(.listChanged)
+    }
+
+    /// The given Downloads, along with the other stream of any Video pair among them.
+    private func includingPartners(of gids: [GID]) async throws -> [GID] {
+        var result: [GID] = []
+        for gid in gids {
+            if !result.contains(gid) { result.append(gid) }
+            if let partner = try await library.videoPair(containing: gid)?.partner(of: gid), !result.contains(partner) {
+                result.append(partner)
+            }
+        }
+        return result
+    }
+
     // MARK: Removing
 
     /// Takes Downloads off the list. An unfinished Download's partial files always go with it.
@@ -361,11 +564,15 @@ public actor DownloadCoordinator {
         var refusals: [DownloadRefusal] = []
         var removable: [GID] = []
 
-        for gid in gids {
+        for gid in try await includingPartners(of: gids) {
             guard let download = try await library.download(gid) else { continue }
             let name = download.fileName ?? download.request.link
             if queues[download.category] != nil {
                 refusals.append(.queueRunning(download.category))
+                continue
+            }
+            if let pair = try await library.videoPair(containing: gid), pairRuns[pair.videoGID] != nil {
+                if !refusals.contains(.pairInProgress) { refusals.append(.pairInProgress) }
                 continue
             }
             guard sessions[gid] == nil, download.status.canBeRemoved else {
@@ -393,9 +600,14 @@ public actor DownloadCoordinator {
             return (try? manager.removeItem(atPath: path)) != nil
         }
 
+        guard let name = download.fileName else { return true }
+        if download.request.engine == .ytDlp {
+            deleteYtDlpPartials(named: name, in: download.request.folder)
+            return true
+        }
+
         // Only a control file proves that a file of this name is this Download's. Without one, it
         // could be anything the user keeps in this folder.
-        guard let name = download.fileName else { return true }
         let path = URL(filePath: download.request.folder, directoryHint: .isDirectory)
             .appending(path: name, directoryHint: .notDirectory).path
         let controlPath = path + "." + "persepolis"
@@ -403,6 +615,15 @@ public actor DownloadCoordinator {
         try? manager.removeItem(atPath: controlPath)
         try? manager.removeItem(atPath: path)
         return true
+    }
+
+    /// D33: only what yt-dlp itself leaves while working, never anything else sharing the name.
+    private func deleteYtDlpPartials(named name: String, in folder: String) {
+        let manager = FileManager.default
+        guard let files = try? manager.contentsOfDirectory(atPath: folder) else { return }
+        for file in files where YtDlpPartials.isPartial(file, of: name) {
+            try? manager.removeItem(atPath: URL(filePath: folder).appending(path: file).path)
+        }
     }
 
     /// Empties the list and removes user Queues, leaving files on disk.
@@ -422,7 +643,7 @@ public actor DownloadCoordinator {
         var refusals: [DownloadRefusal] = []
         let destination = URL(filePath: folder, directoryHint: .isDirectory)
 
-        for gid in gids {
+        for gid in try await includingPartners(of: gids) {
             guard let download = try await library.download(gid) else { continue }
             let name = download.fileName ?? download.request.link
             guard download.status == .complete, let path = download.filePath else {
@@ -457,6 +678,9 @@ public actor DownloadCoordinator {
         }
         try await library.updateRequest(request, for: gid)
         try await library.moveDownload(gid, to: category)
+        if let partner = try await library.videoPair(containing: gid)?.partner(of: gid) {
+            try await library.moveDownload(partner, to: category)
+        }
         secrets.save(downloadSecrets, for: gid)
         eventContinuation.yield(.listChanged)
     }
@@ -469,7 +693,7 @@ public actor DownloadCoordinator {
     /// Moves Downloads to another Category. They must be stopped, and their Queue must not be running.
     public func moveToCategory(_ gids: [GID], category: String) async throws -> [DownloadRefusal] {
         var refusals: [DownloadRefusal] = []
-        for gid in gids {
+        for gid in try await includingPartners(of: gids) {
             guard let download = try await library.download(gid) else { continue }
             if queues[download.category] != nil {
                 refusals.append(.queueRunning(download.category))
@@ -604,25 +828,56 @@ public actor DownloadCoordinator {
     ) async -> DownloadSnapshot? {
         let startedAt = clock.now
         queues[name]?.currentDownload = download.gid
-        let snapshot: DownloadSnapshot? = await withCheckedContinuation { continuation in
+        let snapshot = await runToEnd(
+            download.gid,
+            request: download.request,
+            window: window.start == nil && window.end == nil ? nil : window,
+            speedDial: queues[name]?.speedDial
+        )
+        queues[name]?.currentDownload = nil
+        if snapshot?.status == .complete {
+            await muxIfBothStreamsAreDone(download.gid)
+        }
+        try? await clock.sleep(until: startedAt.addingTimeInterval(Self.minimumTimePerQueuedDownload))
+        return snapshot
+    }
+
+    /// Starts a session, waits for it, and returns how it ended. `nil` means it couldn't start.
+    private func runToEnd(
+        _ gid: GID,
+        request: DownloadRequest,
+        window: ScheduleWindow?,
+        speedDial: Int?
+    ) async -> DownloadSnapshot? {
+        await withCheckedContinuation { continuation in
             Task {
                 do {
                     try await startSession(
-                        download.gid,
-                        request: download.request,
-                        window: window.start == nil && window.end == nil ? nil : window,
-                        speedDial: queues[name]?.speedDial,
+                        gid,
+                        request: request,
+                        window: window,
+                        speedDial: speedDial,
                         onEnd: { continuation.resume(returning: $0) }
                     )
                 } catch {
-                    Self.logger.error("Couldn't start a queued download: \(error.localizedDescription)")
+                    Self.logger.error("Couldn't start a download: \(error.localizedDescription)")
                     continuation.resume(returning: nil)
                 }
             }
         }
-        queues[name]?.currentDownload = nil
-        try? await clock.sleep(until: startedAt.addingTimeInterval(Self.minimumTimePerQueuedDownload))
-        return snapshot
+    }
+
+    /// In a Queue the Queue runs the streams, in whichever order it reaches them, and goes on to its
+    /// next Download only once Muxing is over.
+    private func muxIfBothStreamsAreDone(_ gid: GID) async {
+        guard let pair = try? await library.videoPair(containing: gid),
+              let partner = try? await library.download(pair.partner(of: gid)),
+              partner.status == .complete
+        else { return }
+        pairRuns[pair.videoGID] = PairRun(pair: pair)
+        publishPairs()
+        await muxPair(pair)
+        endPairRun(pair)
     }
 
     private func finishQueue(_ name: String, outcome: QueueOutcome) {

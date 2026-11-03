@@ -35,6 +35,15 @@ public enum ByteFormat {
 }
 
 public enum DurationFormat {
+    /// A running time, as `1:02:03` or `2:03`.
+    public static func clock(seconds: Double) -> String {
+        let total = Int(max(0, seconds))
+        let (hours, minutes, rest) = (total / 3_600, total % 3_600 / 60, total % 60)
+        let tail = String(format: "%02d", rest)
+        if hours > 0 { return "\(hours):" + String(format: "%02d", minutes) + ":" + tail }
+        return "\(minutes):" + tail
+    }
+
     public static func remaining(seconds: Double) -> String {
         let total = Int(max(0, seconds))
         let minutes = total / 60

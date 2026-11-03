@@ -5,7 +5,7 @@ import Foundation
 /// Each worker has its own session, so each gets its own TCP connection rather than sharing an
 /// HTTP/2 one. The delegate runs on the worker's own queue, and blocking that queue is what slows a
 /// transfer: `URLSessionTask.suspend()` keeps delivering data, so it can't be used for Pause.
-final class PartWorker: RequestPolicyDelegate, URLSessionDataDelegate {
+final class PartWorker: RequestPolicyDelegate, URLSessionDataDelegate, @unchecked Sendable {
     private enum Outcome {
         case completed
         case stopped

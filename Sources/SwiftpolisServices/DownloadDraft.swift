@@ -34,6 +34,8 @@ public struct DownloadDraft: Equatable, Sendable {
     public var cookieFilePath = ""
     /// A browser's cookies. They travel with the Download but aren't shown for editing.
     public var cookieHeader: String?
+    /// Video Finder sets this. Otherwise it follows from the name.
+    public var engine = DownloadEngineKind.http
 
     /// A blank draft, for adding a Download.
     public init(preferences: Preferences) {
@@ -89,6 +91,7 @@ public struct DownloadDraft: Equatable, Sendable {
         userAgent = request.userAgent ?? ""
         headers = request.headers ?? ""
         cookieFilePath = request.cookieFilePath ?? ""
+        engine = request.engine
     }
 
     /// A Queue's Downloads run on the Queue's times, not their own.
@@ -121,6 +124,7 @@ public struct DownloadDraft: Equatable, Sendable {
         request.userAgent = Self.nonEmpty(userAgent)
         request.headers = Self.nonEmpty(headers)
         request.cookieFilePath = Self.nonEmpty(cookieFilePath)
+        request.engine = engine == .ytDlp ? .ytDlp : DownloadEngineKind(customFileName: request.customFileName)
         return request
     }
 
