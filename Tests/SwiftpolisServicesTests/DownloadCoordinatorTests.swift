@@ -39,6 +39,7 @@ private final class EventLog: @unchecked Sendable {
                     case .finished(let download): finishedDownloads.append(download)
                     case .progress(let snapshots): progress.append(snapshots)
                     case .listChanged: listChanges += 1
+                    default: break
                     }
                 }
             }
@@ -327,7 +328,8 @@ struct CoordinatorProgressTests {
         let gid = try await fixture.coordinator.add(request, secrets: DownloadSecrets(), to: "Single Downloads", startNow: true)
         await waitUntil { !fixture.engines.all.isEmpty }
 
-        fixture.engines.last?.end(status: .stopped)
+        // It's waiting for its Start time, so stopping ends it straight away.
+        try await fixture.coordinator.stop(gid)
 
         await waitUntil { fixture.events.finished.count == 1 }
         #expect(try await fixture.library.download(gid)?.request.startTime == nil)

@@ -298,6 +298,68 @@ struct LibraryRepositoryTests {
         #expect(try await repository.downloads(in: "All Downloads").map(\.fileName) == ["a", "b", "c"])
     }
 
+    // MARK: Moving up and down
+
+    /// Adds Downloads so that the list reads top to bottom as given, returning their GIDs by name.
+    private func makeQueue(_ repository: LibraryRepository, top toBottom: [String]) async throws -> [String: GID] {
+        try await repository.createQueue(named: "Movies")
+        var gids: [String: GID] = [:]
+        for name in toBottom.reversed() {
+            var named = request("https://\(name)")
+            named.customFileName = name
+            gids[name] = try await repository.addDownload(named, to: "Movies", status: .stopped, at: date)
+        }
+        return gids
+    }
+
+    private func names(_ repository: LibraryRepository) async throws -> [String] {
+        try await repository.downloads(in: "Movies").compactMap(\.fileName)
+    }
+
+    @Test("moving up swaps with the Download above")
+    func moveUp() async throws {
+        let repository = try await makeRepository()
+        let gids = try await makeQueue(repository, top: ["a", "b", "c", "d"])
+
+        try await repository.move([gids["c"]!], in: "Movies", direction: .up)
+
+        #expect(try await names(repository) == ["a", "c", "b", "d"])
+    }
+
+    @Test("moving down swaps with the Download below")
+    func moveDown() async throws {
+        let repository = try await makeRepository()
+        let gids = try await makeQueue(repository, top: ["a", "b", "c", "d"])
+
+        try await repository.move([gids["b"]!], in: "Movies", direction: .down)
+
+        #expect(try await names(repository) == ["a", "c", "b", "d"])
+    }
+
+    @Test("a selection moves together")
+    func moveBlock() async throws {
+        let repository = try await makeRepository()
+        let gids = try await makeQueue(repository, top: ["a", "b", "c", "d"])
+
+        try await repository.move([gids["b"]!, gids["c"]!], in: "Movies", direction: .up)
+        #expect(try await names(repository) == ["b", "c", "a", "d"])
+
+        try await repository.move([gids["b"]!, gids["c"]!], in: "Movies", direction: .down)
+        #expect(try await names(repository) == ["a", "b", "c", "d"])
+    }
+
+    @Test("a selection already at the end stays put, in the same order")
+    func moveAtEnds() async throws {
+        let repository = try await makeRepository()
+        let gids = try await makeQueue(repository, top: ["a", "b", "c"])
+
+        try await repository.move([gids["a"]!, gids["b"]!], in: "Movies", direction: .up)
+        #expect(try await names(repository) == ["a", "b", "c"])
+
+        try await repository.move([gids["c"]!], in: "Movies", direction: .down)
+        #expect(try await names(repository) == ["a", "b", "c"])
+    }
+
     // MARK: Store
 
     @Test("a library on disk is still there, in order, after reopening")

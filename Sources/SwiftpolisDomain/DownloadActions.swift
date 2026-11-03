@@ -90,6 +90,11 @@ public struct DownloadSortFields: Sendable {
     }
 }
 
+public enum MoveDirection: Sendable {
+    case up
+    case down
+}
+
 public enum DownloadSortKey: String, CaseIterable, Sendable {
     case name
     case size

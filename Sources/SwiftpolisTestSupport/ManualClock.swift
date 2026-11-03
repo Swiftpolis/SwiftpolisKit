@@ -33,6 +33,8 @@ public final class ManualClock: WallClock, @unchecked Sendable {
         for sleeper in woken { sleeper.continuation.resume() }
     }
 
+    public var sleeperCount: Int { lock.withLock { sleepers.count } }
+
     /// Returns once `count` tasks are asleep, so a test can advance time without racing them.
     public func waitForSleepers(count: Int) async {
         while lock.withLock({ sleepers.count }) < count {

@@ -236,6 +236,28 @@ public actor LibraryRepository {
         try modelContext.save()
     }
 
+    /// Moves Downloads one place along a Queue's list. Selected ones stay together and in order, and
+    /// a selection already at the end stays where it is.
+    public func move(_ gids: [GID], in categoryName: String, direction: MoveDirection) throws {
+        let selected = Set(gids.map(\.rawValue))
+        var records = try fetchCategory(named: categoryName).downloads
+            .sorted { $0.categoryPosition > $1.categoryPosition }
+        let positions = records.map(\.categoryPosition)
+
+        let indices = direction == .up ? Array(records.indices) : Array(records.indices.reversed())
+        let offset = direction == .up ? -1 : 1
+        for index in indices where selected.contains(records[index].gid) {
+            let neighbour = index + offset
+            guard records.indices.contains(neighbour), !selected.contains(records[neighbour].gid) else { continue }
+            records.swapAt(index, neighbour)
+        }
+
+        for (record, position) in zip(records, positions) {
+            record.categoryPosition = position
+        }
+        try modelContext.save()
+    }
+
     /// Sorts a list and saves the order, so that a Queue also runs in this order.
     public func sort(_ categoryName: String, by key: DownloadSortKey) throws {
         let isAllDownloads = CategoryKind(categoryName: categoryName) == .allDownloads

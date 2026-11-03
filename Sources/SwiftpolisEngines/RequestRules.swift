@@ -53,8 +53,8 @@ enum RetryPolicy {
     }
 }
 
-enum SpeedDial {
-    static let maximum = 10
+public enum SpeedDial {
+    public static let maximum = 10
 
     /// Persepolis's formula: the seconds each Connection waits after every chunk. Because the wait
     /// grows with the Connections, the dial acts as a limit on the Download's total speed.

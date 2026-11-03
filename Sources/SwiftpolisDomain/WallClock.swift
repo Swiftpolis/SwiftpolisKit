@@ -11,9 +11,13 @@ public struct SystemClock: WallClock {
 
     public var now: Date { Date() }
 
+    /// Wakes every second to look at the clock, so that changing the time, or the Mac sleeping
+    /// past `date`, is noticed.
     public func sleep(until date: Date) async throws {
-        let remaining = date.timeIntervalSinceNow
-        guard remaining > 0 else { return }
-        try await Task.sleep(for: .seconds(remaining), clock: .continuous)
+        while true {
+            let remaining = date.timeIntervalSinceNow
+            guard remaining > 0 else { return }
+            try await Task.sleep(for: .seconds(min(remaining, 1)), clock: .continuous)
+        }
     }
 }

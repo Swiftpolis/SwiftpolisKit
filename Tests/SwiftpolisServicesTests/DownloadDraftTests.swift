@@ -87,6 +87,31 @@ struct DownloadDraftTests {
         #expect(draft.request.proxy == nil)
     }
 
+    @Test("Start and End times count only when switched on")
+    func times() {
+        var draft = blank()
+        draft.startTime = ClockTime(hour: 2, minute: 0)!
+        draft.endTime = ClockTime(hour: 6, minute: 0)!
+        #expect(draft.request.startTime == nil)
+        #expect(draft.request.endTime == nil)
+
+        draft.usesStartTime = true
+        draft.usesEndTime = true
+        #expect(draft.request.startTime == ClockTime(hour: 2, minute: 0))
+        #expect(draft.request.endTime == ClockTime(hour: 6, minute: 0))
+    }
+
+    @Test("a Queue's Download has no times of its own, as the Queue's apply")
+    func timesInQueue() {
+        var draft = blank()
+        draft.usesStartTime = true
+        draft.usesEndTime = true
+        draft.category = "Scheduled Downloads"
+        #expect(!draft.canHaveOwnTimes)
+        #expect(draft.request.startTime == nil)
+        #expect(draft.request.endTime == nil)
+    }
+
     @Test("editing a Download and saving unchanged gives back the same options")
     func roundTrip() throws {
         var request = DownloadRequest(link: "https://a", folder: "/f", connections: 3)

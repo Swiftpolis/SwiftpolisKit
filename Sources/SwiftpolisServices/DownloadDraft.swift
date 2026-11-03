@@ -11,6 +11,11 @@ public struct DownloadDraft: Equatable, Sendable {
     public var connections: Int
     public var category = CategoryKind.singleDownloadsName
 
+    public var usesStartTime = false
+    public var startTime = ClockTime(hour: 0, minute: 0)!
+    public var usesEndTime = false
+    public var endTime = ClockTime(hour: 0, minute: 0)!
+
     public var usesProxy = false
     public var proxyKind = ProxySettings.Kind.http
     public var proxyHost = ""
@@ -42,6 +47,14 @@ public struct DownloadDraft: Equatable, Sendable {
         folder = request.folder
         connections = request.connections
         category = download.category
+        if let time = request.startTime {
+            usesStartTime = true
+            startTime = time
+        }
+        if let time = request.endTime {
+            usesEndTime = true
+            endTime = time
+        }
         if let proxy = request.proxy {
             usesProxy = true
             proxyKind = proxy.kind
@@ -59,6 +72,11 @@ public struct DownloadDraft: Equatable, Sendable {
         cookieFilePath = request.cookieFilePath ?? ""
     }
 
+    /// A Queue's Downloads run on the Queue's times, not their own.
+    public var canHaveOwnTimes: Bool {
+        CategoryKind(categoryName: category) == .singleDownloads
+    }
+
     public var hasLink: Bool {
         !link.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
@@ -72,6 +90,10 @@ public struct DownloadDraft: Equatable, Sendable {
             connections: connections
         )
         request.customFileName = changesName ? Self.nonEmpty(customName) : nil
+        if canHaveOwnTimes {
+            request.startTime = usesStartTime ? startTime : nil
+            request.endTime = usesEndTime ? endTime : nil
+        }
         if usesProxy, let host = Self.nonEmpty(proxyHost), proxyPort > 0 {
             request.proxy = ProxySettings(kind: proxyKind, host: host, port: proxyPort, user: Self.nonEmpty(proxyUser))
         }

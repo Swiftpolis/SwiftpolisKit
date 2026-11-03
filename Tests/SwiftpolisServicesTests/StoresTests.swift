@@ -23,6 +23,7 @@ struct PreferencesTests {
         #expect(preferences.timeoutSeconds == 10)
         #expect(preferences.connections == 64)
         #expect(preferences.chunkSizeKiB == 100)
+        #expect(preferences.queueWait == QueueWait(hours: 0, minutes: 0))
         #expect(preferences.verifiesCertificates)
         #expect(preferences.usesSubfolders)
         #expect(preferences.showsProgressWindow)
@@ -39,6 +40,8 @@ struct PreferencesTests {
         preferences.connections = 8
         preferences.downloadFolder = "/tmp/x"
         preferences.usesSubfolders = false
+        preferences.queueWaitHours = 1
+        preferences.queueWaitMinutes = 30
 
         store.preferences = preferences
 

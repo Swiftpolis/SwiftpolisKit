@@ -1,4 +1,5 @@
 import Foundation
+import SwiftpolisDomain
 import SwiftpolisEngines
 
 /// The user's preferences. Defaults match Persepolis's, except the download folder's name.
@@ -8,6 +9,8 @@ public struct Preferences: Equatable, Sendable {
     public var timeoutSeconds = 10
     public var connections = 64
     public var chunkSizeKiB = 100
+    public var queueWaitHours = 0
+    public var queueWaitMinutes = 0
     public var verifiesCertificates = true
     public var downloadFolder = FileManager.default.homeDirectoryForCurrentUser
         .appending(path: "Downloads/Swiftpolis", directoryHint: .isDirectory).path
@@ -21,6 +24,10 @@ public struct Preferences: Equatable, Sendable {
     public var keepsSystemAwake = false
 
     public init() {}
+
+    public var queueWait: QueueWait {
+        QueueWait(hours: queueWaitHours, minutes: queueWaitMinutes)
+    }
 
     public var engineSettings: EngineSettings {
         var settings = EngineSettings()
@@ -51,6 +58,8 @@ public final class PreferencesStore: @unchecked Sendable {
             read(&value.timeoutSeconds, "timeoutSeconds")
             read(&value.connections, "connections")
             read(&value.chunkSizeKiB, "chunkSizeKiB")
+            read(&value.queueWaitHours, "queueWaitHours")
+            read(&value.queueWaitMinutes, "queueWaitMinutes")
             read(&value.verifiesCertificates, "verifiesCertificates")
             read(&value.downloadFolder, "downloadFolder")
             read(&value.usesSubfolders, "usesSubfolders")
@@ -69,6 +78,8 @@ public final class PreferencesStore: @unchecked Sendable {
             defaults.set(newValue.timeoutSeconds, forKey: "timeoutSeconds")
             defaults.set(newValue.connections, forKey: "connections")
             defaults.set(newValue.chunkSizeKiB, forKey: "chunkSizeKiB")
+            defaults.set(newValue.queueWaitHours, forKey: "queueWaitHours")
+            defaults.set(newValue.queueWaitMinutes, forKey: "queueWaitMinutes")
             defaults.set(newValue.verifiesCertificates, forKey: "verifiesCertificates")
             defaults.set(newValue.downloadFolder, forKey: "downloadFolder")
             defaults.set(newValue.usesSubfolders, forKey: "usesSubfolders")
