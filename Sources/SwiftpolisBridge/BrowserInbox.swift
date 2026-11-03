@@ -8,11 +8,18 @@ import Foundation
 /// Each request is one file, so nothing needs the app to be running, and writers never get in each
 /// other's way. See docs/adr/0007-browser-requests-via-shared-inbox.md.
 public struct BrowserInbox: Sendable {
+    #if os(iOS)
+    public static let appGroup = "group.com.amirabravesh.Swiftpolis"
+
+    /// A shared link waits for the person to open the app, which may not be today.
+    private static let maximumAge: TimeInterval = 7 * 24 * 60 * 60
+    #else
     public static let appGroup = "Y4JD236954.com.amirabravesh.Swiftpolis"
     private static let wakeURL = URL(string: "swiftpolis://inbox")!
 
     /// A request older than this is thrown away, so a forgotten link can't pop up days later.
     private static let maximumAge: TimeInterval = 24 * 60 * 60
+    #endif
 
     private let folder: URL
 
@@ -41,6 +48,25 @@ public struct BrowserInbox: Sendable {
             finished.signal()
         }
         _ = finished.wait(timeout: .now() + 5)
+    }
+    #endif
+
+    #if os(iOS)
+    /// What the app listens for, to see links shared while it's already on screen beside another app.
+    public static let wakeNotification = "com.amirabravesh.Swiftpolis.inbox"
+
+    /// The one notification saying links are waiting. A newer one replaces it, and the app removes it.
+    public static let waitingNotificationID = "shared-links"
+
+    /// Tells the app there's something new, if it's running. An extension can't launch its app on iOS.
+    public static func wakeApp() {
+        CFNotificationCenterPostNotification(
+            CFNotificationCenterGetDarwinNotifyCenter(),
+            CFNotificationName(wakeNotification as CFString),
+            nil,
+            nil,
+            true
+        )
     }
     #endif
 

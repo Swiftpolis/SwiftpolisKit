@@ -223,28 +223,6 @@ public enum QueueNaming {
     }
 }
 
-public enum LinkText {
-    /// The links in a piece of text, one per line as in a text file of links. A single-line field can
-    /// turn a list's line breaks into spaces, so a space before another link separates them too.
-    public static func links(in text: String) -> [String] {
-        text.split(whereSeparator: \.isNewline)
-            .flatMap { $0.split(separator: /\s+(?=https?:\/\/)/) }
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter(looksLikeLink)
-    }
-
-    /// Persepolis's test for whether copied text is a link. In practice this means it starts with
-    /// `http://` or `https://`, or something the same shape.
-    public static func looksLikeLink(_ text: String) -> Bool {
-        let characters = Array(text)
-        func contains(_ needle: String, from start: Int, to end: Int) -> Bool {
-            guard characters.count > start else { return false }
-            return String(characters[start..<min(end, characters.count)]).contains(needle)
-        }
-        return contains("tp:/", from: 2, to: 6) || contains("tps:/", from: 2, to: 7)
-    }
-}
-
 /// The files that let Chrome-family browsers and Firefox start the helper.
 public enum NativeHostManifests {
     private static let hostName = "com.persepolis.pdmchromewrapper"
